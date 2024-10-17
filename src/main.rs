@@ -1,18 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use eframe::egui::text::LayoutJob;
-use eframe::egui::Link;
-use eframe::egui::Response;
-use eframe::egui::Ui;
+use eframe::egui::TextEdit;
+use eframe::egui::Widget;
 use env_logger;
 use log::debug;
 use oneshot::Receiver;
-use oneshot::Sender;
 use oneshot::{self};
-use url::{ParseError, Url};
+use url::Url;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
@@ -78,6 +74,7 @@ fn bg_thread(recv: mpsc::Receiver<(String, oneshot::Sender<Result<String>>)>) {
 }
 
 fn start_new_url(
+    url_string: &mut String,
     url: &Url,
     cmd_send: &mpsc::Sender<(String, oneshot::Sender<Result<String>>)>,
     recv_: &mut Receiver<Result<String>>,
@@ -87,7 +84,10 @@ fn start_new_url(
     let (send, recv_tmp_) = oneshot::channel();
     *recv_ = recv_tmp_;
 
-    let _ = cmd_send.send((url.to_string(), send));
+    debug!(target: "nex-ballast-fg", "start_new_url {:?}", url);
+
+    *url_string = url.to_string();
+    let _ = cmd_send.send((url_string.clone(), send));
 
     link_present.clear();
     *state = ControlFlow::Waiting;
@@ -109,17 +109,19 @@ fn main() -> Result<(), eframe::Error> {
 
     thread::spawn(|| bg_thread(cmd_recv));
 
+    // FIXME: We have to decide which url links missing a trailing '/' _and_
+    // a file extension are relative to.
     let mut url_string = String::from("nex://nex.nightfall.city/");
     let _ = cmd_send.send((url_string.clone(), send));
     let nex_string = RefCell::new(String::new());
     let mut link_present: Vec<Option<Url>> = Vec::new();
 
-    eframe::run_simple_native("swmon", options, move |ctx, _frame| {
+    eframe::run_simple_native("ballast", options, move |ctx, _frame| {
         // Render top to bottom
         egui::TopBottomPanel::top("address_bar")
             .resizable(false)
             .show(ctx, |ui| {
-                let response = ui.text_edit_singleline(&mut url_string);
+                let response = TextEdit::singleline(&mut url_string).desired_width(f32::INFINITY).ui(ui);
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     let (send, recv_tmp_) = oneshot::channel();
                     recv_ = recv_tmp_;
@@ -135,7 +137,10 @@ fn main() -> Result<(), eframe::Error> {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.add(egui::widgets::Spinner::new());
+                        ui.centered_and_justified(|ui| {
+                            let height = ui.max_rect().height();
+                            ui.add(egui::widgets::Spinner::new().size(height));
+                        })
                     });
                 match recv_.try_recv() {
                     Ok(Ok(recv)) => {
@@ -153,11 +158,26 @@ fn main() -> Result<(), eframe::Error> {
                         for (i, line) in nex_string.borrow().lines().enumerate() {
                             match link_present.get(i) {
                                 Some(Some(url)) if line.starts_with("=> ") => {
-                                    if ui.link(&line[3..line.len()]).clicked() {
-                                        start_new_url(&url.clone(), &cmd_send, &mut recv_, &mut link_present, &mut state);
+                                    let mut start_new = false;
+
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 0.0;
+                                        let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
+
+                                        ui.label(egui::RichText::new("=> ").monospace());
+                                        if ui.link(&line[3..url_end]).clicked() {
+                                           start_new = true;
+                                        }
+
+                                        if url_end < line.len() {
+                                            ui.label(egui::RichText::new(&line[url_end..]).monospace());
+                                        }
+                                    });
+
+                                    if start_new {
+                                        start_new_url(&mut url_string, &url.clone(), &cmd_send, &mut recv_, &mut link_present, &mut state);
                                         return;
                                     }
-                                    ui.label(egui::RichText::new("\n").monospace());
                                 }
                                 Some(Some(_)) => {
                                     unreachable!()
@@ -167,18 +187,35 @@ fn main() -> Result<(), eframe::Error> {
                                 }
                                 None if line.starts_with("=> ") => {
                                     assert!(link_present.len() == i);
-                                    match Url::parse(&line[3..line.len()]) {
-                                        Ok(url) => {
-                                            link_present.push(Some(url.clone()));
+                                    let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
 
-                                            if ui.link(&line[3..line.len()]).clicked() {
-                                                start_new_url(&url, &cmd_send, &mut recv_, &mut link_present, &mut state);
+                                    match Url::parse(&line[3..url_end]) {
+                                        Ok(url) => {
+                                            let mut start_new = false;
+
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 0.0;
+        
+                                                ui.label(egui::RichText::new("=> ").monospace());
+                                                if ui.link(&line[3..url_end]).clicked() {
+                                                   start_new = true;
+                                                }
+        
+                                                if url_end < line.len() {
+                                                    ui.label(egui::RichText::new(&line[url_end..]).monospace());
+                                                }
+                                            });
+        
+                                            if start_new {
+                                                start_new_url(&mut url_string,&url.clone(), &cmd_send, &mut recv_, &mut link_present, &mut state);
                                                 return;
                                             }
+
+                                            link_present.push(Some(url.clone()));
                                         }
                                         Err(_) => {
                                             let abs_url = match Url::parse(&url_string) {
-                                                Ok(url) => url.join(&line[3..line.len()]),
+                                                Ok(url) => url.join(&line[3..url_end]),
                                                 Err(_) => {
                                                     link_present.push(None);
                                                     ui.label(egui::RichText::new(line).monospace());
