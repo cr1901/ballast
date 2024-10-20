@@ -10,7 +10,9 @@ use std::thread;
 
 use eyre::{eyre, Result};
 
-pub type CmdSend = mpsc::Sender<(String, oneshot::Sender<Result<String>>)>;
+use super::url::NexUrl;
+
+pub type CmdSend = mpsc::Sender<(NexUrl, oneshot::Sender<Result<String>>)>;
 pub type RespRecv = oneshot::Receiver<Result<String>>;
 
 pub fn spawn() -> CmdSend {
@@ -21,7 +23,7 @@ pub fn spawn() -> CmdSend {
     cmd_send
 }
 
-fn bg_thread(recv: mpsc::Receiver<(String, oneshot::Sender<Result<String>>)>) {
+fn bg_thread(recv: mpsc::Receiver<(NexUrl, oneshot::Sender<Result<String>>)>) {
     loop {
         let (url, send) = if let Ok(cmd) = recv.recv() {
             cmd
@@ -30,32 +32,12 @@ fn bg_thread(recv: mpsc::Receiver<(String, oneshot::Sender<Result<String>>)>) {
             break;
         };
 
-        let (domain, port, link) = match Url::parse(&url) {
-            Ok(u) if u.has_host() => {
-                let host = u.host().unwrap().to_owned();
-                (host, u.port().unwrap_or(1900), u.path().to_owned())
-            }
-            Ok(u) if !u.has_host() => {
-                debug!(target: "nex-ballast-bg", "not a domain: {}", u);
-                let _ = send.send(Err(eyre!("not a domain: {}", u)));
-                continue;
-            }
-            Ok(_) => {
-                unreachable!()
-            }
-            Err(e) => {
-                debug!(target: "nex-ballast-bg", "{}", e);
-                let _ = send.send(Err(e.into()));
-                continue;
-            }
-        };
+        debug!(target: "nex-ballast-bg", "Connecting to {:?}", url);
 
-        debug!(target: "nex-ballast-bg", "Connecting to {}, {}, {}", domain, port, link);
-
-        match TcpStream::connect((domain.to_string(), port)) {
+        match TcpStream::connect(&url) {
             Ok(mut conn) => {
                 let mut bytes = Vec::new();
-                conn.write(format!("{}\n", link).as_bytes());
+                conn.write(format!("{}\n", url.selector()).as_bytes());
                 conn.read_to_end(&mut bytes);
 
                 let nex_string = String::from_utf8_lossy(&mut bytes).into_owned();

@@ -5,6 +5,7 @@ use env_logger;
 
 mod app;
 mod retrieval;
+mod url;
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).

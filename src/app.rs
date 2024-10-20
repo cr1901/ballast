@@ -1,9 +1,11 @@
 use eframe;
 use eframe::egui::{self, TextEdit, Widget};
+use eyre::Result;
 use log::debug;
 use url::Url;
 
 use super::retrieval::{self, CmdSend, RespRecv};
+use super::url::NexUrl;
 
 enum ControlFlow {
     Waiting,
@@ -28,11 +30,11 @@ enum NexType {
 pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
-    // doc: Option<Document>
     url: Option<Url>,
     url_string: String,
     raw: String,
     links: Vec<Option<Url>>,
+    nex_url: Option<NexUrl>,
     resp: Option<RespRecv>,
 }
 
@@ -47,6 +49,7 @@ impl Ballast {
             cmd,
             url: None,
             url_string: String::new(),
+            nex_url: None,
             raw: String::new(),
             links: Vec::new(),
             resp: None,
@@ -55,6 +58,7 @@ impl Ballast {
 
     pub fn do_home_page(&mut self) {
         self.url_string = String::from("nex://nex.nightfall.city/");
+        self.nex_url = Some(NexUrl::try_from("nex://nex.nightfall.city/").expect("home page should be a valid NEX URL"));
         self.start_new_url();
     }
 
@@ -65,8 +69,7 @@ impl Ballast {
 
         // let url_string = url.to_string();
         // self.url_string = url_string.clone();
-        self.cmd.send((self.url_string.clone(), send)).unwrap();
-
+        self.cmd.send((self.nex_url.as_ref().unwrap().clone(), send));
         self.links.clear();
         /* match self.doc {
             Some(Document {
@@ -92,9 +95,14 @@ impl eframe::App for Ballast {
                     .desired_width(f32::INFINITY)
                     .ui(ui);
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.start_new_url();
-                }
-            });
+                    if let Ok(nex_url) = NexUrl::try_from(&*self.url_string) {
+                        self.nex_url = Some(nex_url);
+                        self.start_new_url();
+                    } else {
+                        debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", &self.url_string);
+                    } 
+                }}
+            );
 
         egui::CentralPanel::default().show(ctx, |ui| match &mut self.state {
                 ControlFlow::Waiting => {
@@ -123,6 +131,8 @@ impl eframe::App for Ballast {
                         .show(ui, |ui| {
                             for (i, line) in self.raw.lines().enumerate() {
                                 match self.links.get(i) {
+                                    // FIXME: Need to handle links which don't end with extension
+                                    // or '/'... they are currently relative to parent.
                                     Some(Some(url)) if line.starts_with("=> ") => {
                                         let mut start_new = false;
 
@@ -141,8 +151,15 @@ impl eframe::App for Ballast {
                                         });
 
                                         if start_new {
-                                            self.url_string = url.to_string();
-                                            self.start_new_url();
+                                            if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
+                                                debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", &self.url_string, nex_url);
+                                                self.url_string = url.to_string();
+                                                self.nex_url = Some(nex_url);
+                                                self.start_new_url();
+                                            } else {
+                                                debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", &self.url_string);
+                                            }
+
                                             return;
                                         }
                                     }
@@ -174,8 +191,15 @@ impl eframe::App for Ballast {
                                                 });
 
                                                 if start_new {
-                                                    self.url_string = url.to_string();
-                                                    self.start_new_url();
+                                                    if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
+                                                        debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), nex_url);
+                                                        self.url_string = url.to_string();
+                                                        self.nex_url = Some(nex_url);
+                                                        self.start_new_url();
+                                                    } else {
+                                                        debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
+                                                    }
+
                                                     return;
                                                 }
 
@@ -190,6 +214,7 @@ impl eframe::App for Ballast {
                                                         continue;
                                                     }
                                                 };
+                                                // FIXME: Render relative links and start new url here too?
                                                 debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
                                                 match abs_url
                                                 {
