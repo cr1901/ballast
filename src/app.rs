@@ -2,7 +2,6 @@ use std::str::Lines;
 
 use eframe;
 use eframe::egui::{self, Context, TextEdit, Ui, Widget};
-use eyre::Result;
 use log::debug;
 use url::Url;
 

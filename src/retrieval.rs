@@ -1,6 +1,5 @@
 use log::debug;
 use oneshot::{self};
-use url::Url;
 
 use std::io::Read;
 use std::io::Write;
@@ -8,7 +7,7 @@ use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 
-use eyre::{eyre, Result};
+use eyre::Result;
 
 use super::url::NexUrl;
 
