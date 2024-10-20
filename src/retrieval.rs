@@ -10,9 +10,8 @@ use std::thread;
 
 use eyre::{eyre, Result};
 
-
-pub type CmdSend = mpsc::Sender<(String, oneshot::Sender::<Result<String>>)>;
-pub type RespRecv = oneshot::Receiver::<Result<String>>;
+pub type CmdSend = mpsc::Sender<(String, oneshot::Sender<Result<String>>)>;
+pub type RespRecv = oneshot::Receiver<Result<String>>;
 
 pub fn spawn() -> CmdSend {
     let (cmd_send, cmd_recv) = mpsc::channel();
@@ -21,7 +20,6 @@ pub fn spawn() -> CmdSend {
 
     cmd_send
 }
-
 
 fn bg_thread(recv: mpsc::Receiver<(String, oneshot::Sender<Result<String>>)>) {
     loop {

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use env_logger;
 use eframe::egui;
+use env_logger;
 
 mod app;
 mod retrieval;
@@ -14,10 +14,14 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
 
-    eframe::run_native("ballast", options, Box::new(|cc| {
-        let mut app = app::Ballast::new();
-        app.do_home_page();
+    eframe::run_native(
+        "ballast",
+        options,
+        Box::new(|cc| {
+            let mut app = app::Ballast::new();
+            app.do_home_page();
 
-        Box::new(app)
-    }))
+            Box::new(app)
+        }),
+    )
 }

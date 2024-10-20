@@ -29,11 +29,11 @@ pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
     // doc: Option<Document>
-    url: Option<Url>, 
+    url: Option<Url>,
     url_string: String,
     raw: String,
     links: Vec<Option<Url>>,
-    resp: Option<RespRecv>
+    resp: Option<RespRecv>,
 }
 
 impl Ballast {
@@ -45,11 +45,11 @@ impl Ballast {
         Self {
             state: ControlFlow::Waiting,
             cmd,
-            url: None, 
+            url: None,
             url_string: String::new(),
             raw: String::new(),
             links: Vec::new(),
-            resp: None
+            resp: None,
         }
     }
 
@@ -60,18 +60,18 @@ impl Ballast {
 
     fn start_new_url(&mut self) {
         let (send, recv) = oneshot::channel();
-    
+
         // debug!(target: "nex-ballast-fg", "start_new_url {:?}", url.to_string());
-    
+
         // let url_string = url.to_string();
         // self.url_string = url_string.clone();
         self.cmd.send((self.url_string.clone(), send)).unwrap();
-    
+
         self.links.clear();
         /* match self.doc {
             Some(Document {
                 typ: DocType::Nex(NexType::Directory { links }),
-                ..       
+                ..
             })  => {
                 links.clear();
             }
@@ -83,19 +83,20 @@ impl Ballast {
     }
 }
 
-
 impl eframe::App for Ballast {
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("address_bar")
-                .resizable(false)
-                .show(ctx, |ui| {
-                    let response = TextEdit::singleline(&mut self.url_string).desired_width(f32::INFINITY).ui(ui);
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.start_new_url();
-                    }
-                });
+            .resizable(false)
+            .show(ctx, |ui| {
+                let response = TextEdit::singleline(&mut self.url_string)
+                    .desired_width(f32::INFINITY)
+                    .ui(ui);
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.start_new_url();
+                }
+            });
 
-            egui::CentralPanel::default().show(ctx, |ui| match &mut self.state {
+        egui::CentralPanel::default().show(ctx, |ui| match &mut self.state {
                 ControlFlow::Waiting => {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
@@ -213,5 +214,5 @@ impl eframe::App for Ballast {
                         });
                 }
             });
-        }
     }
+}
