@@ -4,17 +4,17 @@ use log::debug;
 use log::warn;
 use oneshot::{self};
 
+use std::error;
+use std::fmt;
+use std::io;
 use std::io::ErrorKind;
 use std::sync::mpsc;
 use std::thread;
-use std::io;
-use std::fmt;
-use std::error;
 
-use eyre::Result;
 use async_channel;
-use futures_lite::{FutureExt, AsyncReadExt, future::block_on};
 use async_net::TcpStream;
+use eyre::Result;
+use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
 
 use super::url::NexUrl;
 
@@ -35,7 +35,6 @@ pub fn spawn() -> (CmdSend, CancelSend) {
     (cmd_send, cancel_send)
 }
 
-
 /* FIXME: Damnit, I did not want to bring in an async executor, but in Rust,
    you're expected to instead of doing select loops. I hope one day I can
    rewrite this so there's a chance it'll run on [Windows 95](https://seri.tools/blog/announcing-rust9x/)
@@ -46,7 +45,10 @@ pub fn spawn() -> (CmdSend, CancelSend) {
    Does Windows 95 have this?
 */
 fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
-    fn tcp_connect<A>(url: A, cancel_recv: &CancelRecv) -> Result<TcpStream, io::Error> where A: AsyncToSocketAddrs {
+    fn tcp_connect<A>(url: A, cancel_recv: &CancelRecv) -> Result<TcpStream, io::Error>
+    where
+        A: AsyncToSocketAddrs,
+    {
         block_on(TcpStream::connect(url).or(async {
             let _ = cancel_recv.recv().await;
             Err(io::Error::other(ConnCancelled {}))
@@ -57,7 +59,11 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
         block_on(conn.write(format!("{}\n", buf).as_bytes()))
     }
 
-    fn tcp_read(mut conn: TcpStream, buf: &mut Vec<u8>, cancel_recv: &CancelRecv) -> Result<usize, io::Error> {
+    fn tcp_read(
+        mut conn: TcpStream,
+        buf: &mut Vec<u8>,
+        cancel_recv: &CancelRecv,
+    ) -> Result<usize, io::Error> {
         block_on(conn.read_to_end(buf).or(async {
             let _ = cancel_recv.recv().await;
             Err(io::Error::other(ConnCancelled {}))
@@ -90,8 +96,8 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
                             Ok(_cc) => {
                                 debug!(target: "nex-ballast-bg", "conection cancelled");
                                 continue;
-                            },
-                            Err(e) => e
+                            }
+                            Err(e) => e,
                         };
 
                         debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
@@ -105,7 +111,7 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
                 let nex_string = String::from_utf8_lossy(&mut bytes).into_owned();
                 // debug!(target: "nex-ballast-bg", "{}", nex_string);
                 let _ = send.send(Ok(nex_string));
-            },
+            }
             Err(e) => {
                 debug!(target: "nex-ballast-bg", "connect error {}", e);
                 let _ = send.send(Err(e.into()));
