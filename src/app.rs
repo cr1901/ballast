@@ -2,8 +2,10 @@ use std::str::Lines;
 
 use eframe;
 use eframe::egui::{self, Context, TextEdit, Ui, Widget};
-use log::debug;
+use log::{debug, warn};
 use url::Url;
+
+use crate::retrieval::CancelSend;
 
 use super::retrieval::{self, CmdSend, RespRecv};
 use super::url::NexUrl;
@@ -31,6 +33,7 @@ enum NexType {
 pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
+    cancel: CancelSend,
     url: Option<Url>,
     url_string: String,
     raw: String,
@@ -41,13 +44,14 @@ pub struct Ballast {
 
 impl Ballast {
     pub fn new() -> Self {
-        let cmd = retrieval::spawn();
+        let (cmd, cancel) = retrieval::spawn();
         // let nex_string = RefCell::new(String::new());
         // let mut link_present: Vec<Option<Url>> = Vec::new();
 
         Self {
             state: ControlFlow::Waiting,
             cmd,
+            cancel,
             url: None,
             url_string: String::new(),
             nex_url: None,
@@ -88,6 +92,12 @@ impl Ballast {
 
         self.state = ControlFlow::Waiting;
         self.resp = Some(recv);
+    }
+
+    fn stop_url(&self) {
+        if let Err(_) = self.cancel.try_send(()) {
+            warn!(target: "nex-ballast-fg", "unexpected cancel request in queue");
+        }
     }
 }
 

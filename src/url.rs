@@ -13,6 +13,14 @@ pub struct NexUrl {
 }
 
 impl NexUrl {
+    pub fn host(&self) -> &str {
+        &*self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     pub fn selector(&self) -> &str {
         &*self.selector
     }
@@ -25,14 +33,14 @@ impl TryFrom<&str> for NexUrl {
         match Url::parse(&value) {
             Ok(u) if u.has_host() => {
                 if u.scheme() != "nex" {
-                    return Err(TryFromStringError);
+                    return Err(TryFromStringError)
                 }
 
                 let host = u.host().unwrap().to_owned();
                 Ok(Self {
                     host: host.to_string(),
                     port: u.port().unwrap_or(1900),
-                    selector: u.path().to_owned(),
+                    selector: u.path().to_owned()
                 })
             }
             Ok(u) if !u.has_host() => {
