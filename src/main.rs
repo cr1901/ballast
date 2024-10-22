@@ -22,7 +22,7 @@ fn main() -> Result<(), eframe::Error> {
             let mut app = app::Ballast::new();
             app.do_home_page();
 
-            Box::new(app)
+            Ok(Box::new(app))
         }),
     )
 }

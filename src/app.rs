@@ -1,7 +1,10 @@
+use std::ops::Add;
 use std::str::Lines;
 
 use eframe;
-use eframe::egui::{self, Context, TextEdit, Ui, Widget};
+use eframe::egui::menu::{self, SubMenuButton};
+use eframe::egui::{self, vec2, Align2, Button, Context, Rect, TextEdit, Ui, Widget};
+use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
 
@@ -10,6 +13,7 @@ use crate::retrieval::CancelSend;
 use super::retrieval::{self, CmdSend, RespRecv};
 use super::url::NexUrl;
 
+#[derive(PartialEq)]
 enum ControlFlow {
     Waiting,
     TextDoc,
@@ -40,6 +44,7 @@ pub struct Ballast {
     links: Vec<Option<Url>>,
     nex_url: Option<NexUrl>,
     resp: Option<RespRecv>,
+    toasts: Toasts
 }
 
 impl Ballast {
@@ -58,6 +63,8 @@ impl Ballast {
             raw: String::new(),
             links: Vec::new(),
             resp: None,
+            toasts: Toasts::new().anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
+                    .direction(egui::Direction::BottomUp)
         }
     }
 
@@ -103,7 +110,7 @@ impl Ballast {
 
 impl eframe::App for Ballast {
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
-        match ui_address_bar(ctx, &mut self.url_string) {
+        match ui_address_bar(self, ctx) {
             Some(AddressBarAction::StartNewUrl) => {
                 if let Ok(nex_url) = NexUrl::try_from(&*self.url_string) {
                     self.nex_url = Some(nex_url);
@@ -112,6 +119,16 @@ impl eframe::App for Ballast {
                     debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", &self.url_string);
                 }
             }
+            Some(AddressBarAction::Unsupported(msg)) => {
+                self.toasts.add(Toast {
+                    text: format!("Unsupported feature: {}", msg).into(),
+                    kind: ToastKind::Info,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(5.0)
+                        .show_progress(true),
+                    ..Default::default()
+                });
+            },
             None => {}
         }
 
@@ -130,7 +147,7 @@ impl eframe::App for Ballast {
                 }
             }
             ControlFlow::TextDoc => {
-                match ui_textdoc(ui, self.raw.lines(), &mut self.links, &self.url_string) {
+                match ui_textdoc(ui, ctx, self.raw.lines(), &mut self.links, &self.url_string, &mut self.toasts) {
                     Some(TextDocAction::StartNewUrl(url)) => {
                         if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
                             debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), nex_url);
@@ -140,7 +157,7 @@ impl eframe::App for Ballast {
                         } else {
                             debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
                         }
-                    }
+                    },
                     None => {}
                 }
             }
@@ -150,20 +167,65 @@ impl eframe::App for Ballast {
 
 enum AddressBarAction {
     StartNewUrl,
+    Unsupported(&'static str)
 }
 
-fn ui_address_bar(ctx: &Context, addr_str: &mut String) -> Option<AddressBarAction> {
+fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarAction> {
     let mut action = None;
 
     egui::TopBottomPanel::top("address_bar")
         .resizable(false)
         .show(ctx, |ui| {
-            let response = TextEdit::singleline(addr_str)
-                .desired_width(f32::INFINITY)
-                .ui(ui);
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                action = Some(AddressBarAction::StartNewUrl);
-            }
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x *= 0.5;
+                let max_rect = ui.max_rect();
+                let width = max_rect.width();
+
+                // FIXME: How do I set this based on menu size?
+                // I want to right-justify menu and set address bar as a function
+                // of menu bar size. Right now, everything _barely_ fits into 640 px.
+                let response = TextEdit::singleline(&mut ballast.url_string)
+                                                    .desired_width(width*0.80)
+                                                    .ui(ui);
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    action = Some(AddressBarAction::StartNewUrl);
+                }
+
+                menu::bar(ui, |ui| {
+                    if ui.button("\u{1f5d9}").clicked() && ballast.state == ControlFlow::Waiting {
+                        ballast.stop_url();
+                    }
+
+                    if ui.button("\u{1f3e0}").clicked() {
+                        if ballast.state == ControlFlow::Waiting {
+                            ballast.stop_url();
+                        }
+                        ballast.do_home_page();
+                    }
+
+                    // TODO: Figure out how menus can overflow their container.
+                    // egui "does the right thing" here, but it's still rather
+                    // magic to me...
+                    // Menus have shadows, so they're a different egui Layer?
+                    if ui.menu_button("\u{21a9}", |ui| {
+                    }).response.clicked() {
+                        action = Some(AddressBarAction::Unsupported("Back"));
+                    }
+
+                    if ui.menu_button("\u{21aa}", |ui| {
+                    }).response.clicked() {
+                        action = Some(AddressBarAction::Unsupported("Forward"));
+                    }
+
+                    if ui.button("\u{1f4be}").clicked() {
+                        action = Some(AddressBarAction::Unsupported("Download"));
+                    }
+
+                    if ui.button("\u{1f50d}").clicked() {
+                        action = Some(AddressBarAction::Unsupported("Find"));
+                    }
+                });  
+            })
         });
 
     action
@@ -186,9 +248,11 @@ enum TextDocAction {
 
 fn ui_textdoc(
     ui: &mut Ui,
+    ctx: &eframe::egui::Context,
     lines: Lines,
     links: &mut Vec<Option<Url>>,
     addr_str: &String,
+    toasts: &mut Toasts
 ) -> Option<TextDocAction> {
     let mut action = None;
 
@@ -284,8 +348,10 @@ fn ui_textdoc(
                         links.push(None);
                         ui.label(egui::RichText::new(format!("{}\n", line)).monospace());
                     }
-                }
+                } 
             }
+
+            toasts.show(ctx);
         });
 
     action
