@@ -2,8 +2,8 @@ use std::ops::Add;
 use std::str::Lines;
 
 use eframe;
-use eframe::egui::menu::{self, SubMenuButton};
-use eframe::egui::{self, vec2, Align2, Button, Context, Rect, TextEdit, Ui, Widget};
+use eframe::egui::menu::{self};
+use eframe::egui::{self, Align2, Context, TextEdit, Ui, Widget};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
@@ -44,7 +44,7 @@ pub struct Ballast {
     links: Vec<Option<Url>>,
     nex_url: Option<NexUrl>,
     resp: Option<RespRecv>,
-    toasts: Toasts
+    toasts: Toasts,
 }
 
 impl Ballast {
@@ -63,8 +63,9 @@ impl Ballast {
             raw: String::new(),
             links: Vec::new(),
             resp: None,
-            toasts: Toasts::new().anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
-                    .direction(egui::Direction::BottomUp)
+            toasts: Toasts::new()
+                .anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
+                .direction(egui::Direction::BottomUp),
         }
     }
 
@@ -128,7 +129,7 @@ impl eframe::App for Ballast {
                         .show_progress(true),
                     ..Default::default()
                 });
-            },
+            }
             None => {}
         }
 
@@ -167,7 +168,7 @@ impl eframe::App for Ballast {
 
 enum AddressBarAction {
     StartNewUrl,
-    Unsupported(&'static str)
+    Unsupported(&'static str),
 }
 
 fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarAction> {
@@ -185,8 +186,8 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                 // I want to right-justify menu and set address bar as a function
                 // of menu bar size. Right now, everything _barely_ fits into 640 px.
                 let response = TextEdit::singleline(&mut ballast.url_string)
-                                                    .desired_width(width*0.80)
-                                                    .ui(ui);
+                    .desired_width(width * 0.80)
+                    .ui(ui);
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     action = Some(AddressBarAction::StartNewUrl);
                 }
@@ -207,13 +208,11 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                     // egui "does the right thing" here, but it's still rather
                     // magic to me...
                     // Menus have shadows, so they're a different egui Layer?
-                    if ui.menu_button("\u{21a9}", |ui| {
-                    }).response.clicked() {
+                    if ui.menu_button("\u{21a9}", |ui| {}).response.clicked() {
                         action = Some(AddressBarAction::Unsupported("Back"));
                     }
 
-                    if ui.menu_button("\u{21aa}", |ui| {
-                    }).response.clicked() {
+                    if ui.menu_button("\u{21aa}", |ui| {}).response.clicked() {
                         action = Some(AddressBarAction::Unsupported("Forward"));
                     }
 
@@ -224,7 +223,7 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                     if ui.button("\u{1f50d}").clicked() {
                         action = Some(AddressBarAction::Unsupported("Find"));
                     }
-                });  
+                });
             })
         });
 
@@ -252,7 +251,7 @@ fn ui_textdoc(
     lines: Lines,
     links: &mut Vec<Option<Url>>,
     addr_str: &String,
-    toasts: &mut Toasts
+    toasts: &mut Toasts,
 ) -> Option<TextDocAction> {
     let mut action = None;
 
@@ -348,7 +347,7 @@ fn ui_textdoc(
                         links.push(None);
                         ui.label(egui::RichText::new(format!("{}\n", line)).monospace());
                     }
-                } 
+                }
             }
 
             toasts.show(ctx);
