@@ -1,14 +1,16 @@
+use std::collections::VecDeque;
 use std::ops::Add;
 use std::str::Lines;
 
 use eframe;
 use eframe::egui::menu::{self};
-use eframe::egui::{self, Align2, Context, TextEdit, Ui, Widget};
+use eframe::egui::{self, Align2, Button, Context, TextEdit, Ui, Widget};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
 
 use crate::retrieval::CancelSend;
+use crate::url::UrlStack;
 
 use super::retrieval::{self, CmdSend, RespRecv};
 use super::url::NexUrl;
@@ -38,11 +40,11 @@ pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
     cancel: CancelSend,
-    url: Option<Url>,
     url_string: String,
     raw: String,
     links: Vec<Option<Url>>,
     nex_url: Option<NexUrl>,
+    url_stack: UrlStack,
     resp: Option<RespRecv>,
     toasts: Toasts,
 }
@@ -57,9 +59,9 @@ impl Ballast {
             state: ControlFlow::Waiting,
             cmd,
             cancel,
-            url: None,
             url_string: String::new(),
             nex_url: None,
+            url_stack: UrlStack::new(),
             raw: String::new(),
             links: Vec::new(),
             resp: None,
@@ -79,9 +81,34 @@ impl Ballast {
     }
 
     fn start_new_url(&mut self) {
-        let (send, recv) = oneshot::channel();
-
         // debug!(target: "nex-ballast-fg", "start_new_url {:?}", url.to_string());
+
+        self.url_stack.push(self.nex_url.as_ref().unwrap().clone());
+        self.do_url();
+    }
+
+    fn get_previous_url(&mut self) {
+        // debug!(target: "nex-ballast-fg", "start_new_url {:?}", url.to_string());
+
+        /* match self.url_stack_ptr {
+            None => {
+                unreachable!()
+            },
+            Some(ref mut ptr) => {
+                let len = self.url_stack.len();
+
+                assert!(*ptr < len);
+                *ptr -= 1;
+
+                self.nex_url = Some(self.url_stack[*ptr].clone());
+            }
+        } */
+
+        self.do_url();
+    }
+
+    fn do_url(&mut self) {
+        let (send, recv) = oneshot::channel();
 
         // let url_string = url.to_string();
         // self.url_string = url_string.clone();
@@ -208,9 +235,29 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                     // egui "does the right thing" here, but it's still rather
                     // magic to me...
                     // Menus have shadows, so they're a different egui Layer?
-                    if ui.menu_button("\u{21a9}", |ui| {}).response.clicked() {
-                        action = Some(AddressBarAction::Unsupported("Back"));
-                    }
+                    ui.menu_button("\u{21a9}", |ui| {
+                        let mut clicked = None;
+                        for (i, u) in ballast.url_stack.iter() {
+                            ui.set_max_width(200.0);
+                            if Some(i) == ballast.url_stack.ptr() {
+                                if Button::new(format!("\u{2705} nex://{}{}", u.host(), u.selector()))
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .ui(ui).clicked() {
+                                        clicked = Some(i);
+                                    }
+                            } else {
+                                if Button::new(format!("nex://{}{}", u.host(), u.selector()))
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .ui(ui).clicked() {
+                                        clicked = Some(i);
+                                    }
+                            }
+                        }
+
+                        if let Some(i) = clicked {
+                            debug!(target: "nex-ballast-fg", "url clicked... {}", i);
+                        }
+                    });
 
                     if ui.menu_button("\u{21aa}", |ui| {}).response.clicked() {
                         action = Some(AddressBarAction::Unsupported("Forward"));
