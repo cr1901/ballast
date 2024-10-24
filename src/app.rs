@@ -328,20 +328,9 @@ fn ui_textdoc(
             for (i, line) in lines.enumerate() {
                 match links.get(i) {
                     Some(Some(url)) if line.starts_with("=> ") => {
-                        match url.scheme() {
-                            "http" | "https" => ui_http(ui, &line),
-                            "nex" => {
-                                if ui_hyperlink(ui, &line) {
-                                    action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                                    return;
-                                }
-                            },
-                            _ => {
-                                if ui_hyperlink(ui, &line) {
-                                    action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                                    return;
-                                }
-                            }
+                        if let Some(a) = ui_hyperlink(ui, &line, &url) {
+                            action = Some(a);
+                            return;
                         }
                     }
                     Some(Some(_)) => {
@@ -353,36 +342,25 @@ fn ui_textdoc(
                     None if line.starts_with("=> ") => {
                         assert!(links.len() == i);	
 
-                        // let (url_port, _) = url_portion(line);
+                        // let (url_port, _) = split_directory(line);
                         match resolve_line(&line, &addr_str) {
                             Some(url) => {
-                                match url.scheme() {
-                                    "http" | "https" => ui_http(ui, &line),
-                                    "nex" => {
-                                        if ui_hyperlink(ui, &line) {
-                                            action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                                            return;
-                                        }
-                                    },
-                                    _ => {
-                                        if ui_hyperlink(ui, &line) {
-                                            action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                                            return;
-                                        }
-                                    }
+                                if let Some(a) = ui_hyperlink(ui, &line, &url) {
+                                    action = Some(a);
+                                    return;
                                 }
 
                                 links.push(Some(url.clone()));
                             },
                             None => {
-                                links.push(None);
                                 ui.label(egui::RichText::new(line).monospace());
+                                links.push(None);
                             }
                         }
                     }
                     None => {
+                        ui.label(egui::RichText::new(line).monospace());
                         links.push(None);
-                        ui.label(egui::RichText::new(format!("{}", line)).monospace());
                     }
                 }
             }
@@ -393,48 +371,66 @@ fn ui_textdoc(
     action
 }
 
+fn ui_hyperlink(ui: &mut Ui, line: &str, url: &Url) -> Option<TextDocAction> {
+    match url.scheme() {
+        "http" | "https" => ui_http(ui, &line),
+        "nex" => {
+            if ui_nex(ui, &line) {
+                return Some(TextDocAction::StartNewUrl(url.to_string()));
+            }
+        },
+        _ => {
+            if ui_generic_link(ui, &line) {
+                return Some(TextDocAction::StartNewUrl(url.to_string()));
+            }
+        }
+    }
+
+    None
+}
+
 fn ui_http(ui: &mut Ui, line: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let (url_port, url_end) = url_portion(line);
+        let (_, url_port, rest) = split_directory(line);
 
         ui.label(egui::RichText::new("=> ").monospace());
         ui.hyperlink(url_port);
 
-        if url_end < line.len() {
-            ui.label(egui::RichText::new(url_port).monospace());
-        }
+        ui.label(egui::RichText::new(rest).monospace());
     });
 }
 
-fn ui_hyperlink(ui: &mut Ui, line: &str) -> bool {
+fn ui_nex(ui: &mut Ui, line: &str) -> bool {
+    ui_generic_link(ui, line)
+}
+
+fn ui_generic_link(ui: &mut Ui, line: &str) -> bool {
     let mut start_new = false;
 
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let (url_port, url_end) = url_portion(line);
+        let (_, url_port, rest) = split_directory(line);
 
         ui.label(egui::RichText::new("=> ").monospace());
         if ui.link(url_port).clicked() {
             start_new = true;
         }
 
-        if url_end < line.len() {
-            ui.label(egui::RichText::new(url_port).monospace());
-        }
+        ui.label(egui::RichText::new(rest).monospace());
     });
 
     start_new
 }
 
-fn url_portion(line: &str) -> (&str, usize) {
+fn split_directory(line: &str) -> (&str, &str, &str) {
     let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
-    (&line[3..url_end], url_end)
+    (&line[..3], &line[3..url_end], &line[url_end..])
 }
 
 
 fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
-    let (url_port, _) = url_portion(line);
+    let (_, url_port, _) = split_directory(line);
 
     match Url::parse(url_port) {
         Ok(url) => {
