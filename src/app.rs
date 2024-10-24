@@ -231,7 +231,7 @@ enum AddressBarAction {
     StartNewUrlBackFwd(NexUrl),
     Unsupported(&'static str),
     CancelLoad,
-    StartHomePage
+    StartHomePage,
 }
 
 fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarAction> {
@@ -275,15 +275,19 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                             if Some(i.into()) == ballast.url_stack.ptr() {
                                 if Button::new(format!("\u{2705} {}", u.to_string()))
                                     .wrap_mode(egui::TextWrapMode::Extend)
-                                    .ui(ui).clicked() {
-                                        clicked = Some((i, u.clone()));
-                                    }
+                                    .ui(ui)
+                                    .clicked()
+                                {
+                                    clicked = Some((i, u.clone()));
+                                }
                             } else {
                                 if Button::new(format!("{}", u.to_string()))
                                     .wrap_mode(egui::TextWrapMode::Extend)
-                                    .ui(ui).clicked() {
-                                        clicked = Some((i, u.clone()));
-                                    }
+                                    .ui(ui)
+                                    .clicked()
+                                {
+                                    clicked = Some((i, u.clone()));
+                                }
                             }
                         }
                     });

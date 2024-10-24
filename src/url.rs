@@ -102,7 +102,6 @@ impl Into<usize> for UrlStackPtr {
     }
 }
 
-
 // TODO: Implement a stack depth limit of some sort, or go back to VecDeque?
 impl UrlStack {
     pub fn new() -> Self {
@@ -113,7 +112,7 @@ impl UrlStack {
     }
 
     pub fn push(&mut self, url: NexUrl) {
-         match self.ptr {
+        match self.ptr {
             /* A push should remove all stack entries above it. */
             Some(ptr) => {
                 // debug!(target: "nex-ballast-fg", "stack {}",)
@@ -124,7 +123,7 @@ impl UrlStack {
                 self.ptr = Some(0);
                 self.stack.push(url);
                 return;
-            },
+            }
         };
     }
 
