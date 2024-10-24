@@ -19,20 +19,29 @@ enum ControlFlow {
     TextDoc,
 }
 
-/* struct Document {
+struct Document {
     raw: String,
-    typ: DocType
+    typ: DocType,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            raw: String::default(),
+            typ: DocType::Null,
+        }
+    }
 }
 
 enum DocType {
+    Null,
+    Error,
     Nex(NexType),
 }
 
 enum NexType {
-    Directory {
-        links: Vec<Option<Url>>
-    }
-} */
+    Directory { links: Vec<Option<Url>> },
+}
 
 pub struct Ballast {
     state: ControlFlow,
@@ -40,8 +49,7 @@ pub struct Ballast {
     cancel: CancelSend,
     /// Url in the address bar.
     url_string: String,
-    raw: String,
-    links: Vec<Option<Url>>,
+    doc: Document,
     /// Current URL.
     nex_url: Option<NexUrl>,
     /// History of visited URLs.
@@ -63,12 +71,18 @@ impl Ballast {
             url_string: String::new(),
             nex_url: None,
             url_stack: UrlStack::new(),
-            raw: String::new(),
-            links: Vec::new(),
+            doc: Document::default(),
             resp: None,
             toasts: Toasts::new()
                 .anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
                 .direction(egui::Direction::BottomUp),
+        }
+    }
+
+    fn clear_links(&mut self) {
+        match &mut self.doc.typ {
+            DocType::Nex(NexType::Directory { links }) => links.clear(),
+            _ => {}
         }
     }
 
@@ -98,18 +112,10 @@ impl Ballast {
 
         // let url_string = url.to_string();
         // self.url_string = url_string.clone();
-        let _ = self.cmd
+        let _ = self
+            .cmd
             .send((self.nex_url.as_ref().unwrap().clone(), send));
-        self.links.clear();
-        /* match self.doc {
-            Some(Document {
-                typ: DocType::Nex(NexType::Directory { links }),
-                ..
-            })  => {
-                links.clear();
-            }
-            _ => {}
-        } */
+        self.clear_links();
 
         self.state = ControlFlow::Waiting;
         self.resp = Some(recv);
@@ -166,11 +172,12 @@ impl eframe::App for Ballast {
                 if let Some(ref mut recv) = self.resp {
                     match recv.try_recv() {
                         Ok(Ok(recv)) => {
-                            self.raw = recv;
-                            self.links.clear();
+                            self.doc.raw = recv;
+                            self.doc.typ = DocType::Nex(NexType::Directory { links: Vec::new() });
+                            self.clear_links();
                             self.state = ControlFlow::TextDoc;
 
-                            if self.raw.contains('\u{fffd}') {
+                            if self.doc.raw.contains('\u{fffd}') {
                                 self.toasts.add(Toast {
                                     text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
                                     kind: ToastKind::Warning,
@@ -182,8 +189,9 @@ impl eframe::App for Ballast {
                             }
                         }
                         Ok(Err(r)) => {
-                            self.raw = format!("Error resolving {}:\n{}", self.nex_url.as_ref().unwrap().to_string(), r.to_string());
-                            self.links.clear();
+                            self.doc.typ = DocType::Error;
+                            self.doc.raw = format!("Error resolving {}:\n{}", self.nex_url.as_ref().unwrap().to_string(), r.to_string());
+                            self.clear_links();
                             self.state = ControlFlow::TextDoc;
                         }
                         _ => {}
@@ -193,19 +201,37 @@ impl eframe::App for Ballast {
                 self.toasts.show(ctx);
             }
             ControlFlow::TextDoc => {
-                match ui_textdoc(ui, ctx, self.raw.lines(), &mut self.links, &self.url_string, &mut self.toasts) {
-                    Some(TextDocAction::StartNewUrl(url)) => {
-                        if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
-                            debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), nex_url);
-                            self.url_string = url.to_string();
-                            self.nex_url = Some(nex_url);
-                            self.start_new_url();
-                        } else {
-                            debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
+                match self.doc {
+                    Document {
+                        ref raw,
+                        typ: DocType::Nex(NexType::Directory { ref mut links })
+                    } => {
+                        match ui_textdoc(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
+                            Some(TextDocAction::StartNewUrl(url)) => {
+                                if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
+                                    debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), nex_url);
+                                    self.url_string = url.to_string();
+                                    self.nex_url = Some(nex_url);
+                                    self.start_new_url();
+                                } else {
+                                    debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
+                                }
+                            },
+                            None => {}
                         }
                     },
-                    None => {}
+                    Document {
+                        ref raw,
+                        typ: DocType::Error
+                    } => {
+                        for line in raw.lines() {
+                            ui.label(egui::RichText::new(line).monospace());
+                        }
+                    },
+                    Document { typ: DocType::Null, .. } => {}
                 }
+
+
             }
         });
     }
@@ -334,13 +360,16 @@ fn ui_textdoc(
                         }
                     }
                     Some(Some(_)) => {
-                        unreachable!("links vector should have an entry for line {}, but doesn't", i);
+                        unreachable!(
+                            "links vector should have an entry for line {}, but doesn't",
+                            i
+                        );
                     }
                     Some(None) => {
                         ui.label(egui::RichText::new(line).monospace());
                     }
                     None if line.starts_with("=> ") => {
-                        assert!(links.len() == i);	
+                        assert!(links.len() == i);
 
                         // let (url_port, _) = split_directory(line);
                         match resolve_line(&line, &addr_str) {
@@ -351,7 +380,7 @@ fn ui_textdoc(
                                 }
 
                                 links.push(Some(url.clone()));
-                            },
+                            }
                             None => {
                                 ui.label(egui::RichText::new(line).monospace());
                                 links.push(None);
@@ -378,7 +407,7 @@ fn ui_hyperlink(ui: &mut Ui, line: &str, url: &Url) -> Option<TextDocAction> {
             if ui_nex(ui, &line) {
                 return Some(TextDocAction::StartNewUrl(url.to_string()));
             }
-        },
+        }
         _ => {
             if ui_generic_link(ui, &line) {
                 return Some(TextDocAction::StartNewUrl(url.to_string()));
@@ -428,18 +457,13 @@ fn split_directory(line: &str) -> (&str, &str, &str) {
     (&line[..3], &line[3..url_end], &line[url_end..])
 }
 
-
 fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
     let (_, url_port, _) = split_directory(line);
 
     match Url::parse(url_port) {
-        Ok(url) => {
-            Some(url)
-        }
-        Err(_) => {
-            resolve_relative(addr_str, url_port)
-        }
-    } 
+        Ok(url) => Some(url),
+        Err(_) => resolve_relative(addr_str, url_port),
+    }
 }
 
 fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
@@ -459,13 +483,8 @@ fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
     };
     // FIXME: Render relative links and start new url here too?
     debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
-    match abs_url
-    {
-        Ok(url) => {
-            Some(url)
-        }
-        Err(_) => {
-            None
-        }
+    match abs_url {
+        Ok(url) => Some(url),
+        Err(_) => None,
     }
 }
