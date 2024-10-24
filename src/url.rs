@@ -1,4 +1,6 @@
-use std::{collections::VecDeque, net::ToSocketAddrs};
+use std::cmp::min;
+use std::iter;
+use std::net::ToSocketAddrs;
 
 use url::Url;
 
@@ -70,6 +72,16 @@ impl ToSocketAddrs for NexUrl {
     }
 }
 
+impl ToString for NexUrl {
+    fn to_string(&self) -> String {
+        if self.port() == 1900 {
+            format!("nex://{}{}", self.host(), self.selector())
+        } else {
+            format!("nex://{}:{}{}", self.host(), self.port(), self.selector())
+        }
+    }
+}
+
 // impl AsRef<str> for NexUrl {
 //     fn as_ref(&self) -> &str {
 //         &self.0
@@ -77,91 +89,80 @@ impl ToSocketAddrs for NexUrl {
 // }
 
 pub struct UrlStack {
-    stack: VecDeque<NexUrl>,
+    stack: Vec<NexUrl>,
     ptr: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct UrlStackPtr(usize);
+
+impl Into<usize> for UrlStackPtr {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
+
+// TODO: Implement a stack depth limit of some sort, or go back to VecDeque?
 impl UrlStack {
     pub fn new() -> Self {
         Self {
-            stack: VecDeque::new(),
+            stack: Vec::new(),
             ptr: None,
         }
     }
 
-    fn ptr_at_beginning(&self) -> bool {
-        self.ptr.map_or(true, |p| p == 0)
-    }
-
-    fn ptr_at_end(&self) -> bool {
-        self.ptr.map_or(false, |p| p == self.stack.len() - 1)
-    }
-
     pub fn push(&mut self, url: NexUrl) {
-        if self.ptr_at_end() {
-            if self.stack.len() >= 10 {
-                self.stack.pop_front();
-                self.stack.push_back(url);
-            } else {
-                self.stack.push_back(url);
-                *self.ptr.as_mut().unwrap() += 1;
+         match self.ptr {
+            /* A push should remove all stack entries above it. */
+            Some(ptr) => {
+                // debug!(target: "nex-ballast-fg", "stack {}",)
+                self.truncate(url, UrlStackPtr(ptr));
             }
-        } else if let Some(ref mut ptr) = self.ptr {
-            self.stack.truncate(*ptr + 1);
-            self.stack.push_back(url);
-            *ptr += 1;
-        } else {
-            assert!(self.stack.len() == 0);
-            self.stack.push_back(url);
-            self.ptr = Some(0);
-        }
+            /* If we just started, nothing to truncate. */
+            None => {
+                self.ptr = Some(0);
+                self.stack.push(url);
+                return;
+            },
+        };
+    }
+
+    pub fn truncate(&mut self, url: NexUrl, ptr: UrlStackPtr) {
+        assert!(self.ptr.is_some());
+        assert!(ptr.0 < self.stack.len());
+
+        self.stack.truncate(ptr.0 + 1);
+        self.stack.push(url);
+        self.ptr = Some(ptr.0 + 1);
     }
 
     pub fn ptr(&self) -> Option<usize> {
         self.ptr
     }
 
-    pub fn set_ptr(&mut self, ptr: usize) {
+    pub fn set_ptr(&mut self, ptr: UrlStackPtr) {
         assert!(self.ptr.is_some());
-        assert!(ptr < self.stack.len());
-        self.ptr.replace(ptr);
+        assert!(ptr.0 < self.stack.len());
+        self.ptr.replace(ptr.0);
     }
 
-    pub fn truncate(&mut self, url: NexUrl, curr: usize) {
-        if self.ptr_at_end() {
-            if self.stack.len() >= 10 {
-                self.stack.pop_front();
-                self.stack.push_back(url);
-            } else {
-                self.stack.push_back(url);
-                *self.ptr.as_mut().unwrap() += 1;
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (UrlStackPtr, &NexUrl)> + '_> {
+        match self.ptr {
+            Some(ptr) if self.stack.len() > 1 => {
+                let end = min(ptr + 5, self.stack.len());
+                let begin = ptr.saturating_sub(5);
+
+                return Box::new(
+                    (begin..end)
+                        .rev()
+                        .map(UrlStackPtr)
+                        .zip(self.stack[begin..end].iter().rev()),
+                );
+            }
+            Some(_) | None => {
+                return Box::new(iter::empty());
             }
         }
-    }
-
-    // pub fn curr(&self) -> Option<NexUrl> {}
-
-    pub fn iter(&self) -> impl Iterator<Item = (usize, &NexUrl)> {
-        let (first, rest) = self.stack.as_slices();
-        rest.iter()
-            .rev()
-            .chain(first.iter().rev())
-            .enumerate()
-            .map(|(i, u)| (self.stack.len() - 1 - i, u))
-        // .map(|(i, n)| (self.ptr.map_or(false, |p| i == p), n))
-
-        // for u in first.iter().chain(rest) {
-        //     ui.button(format!("{}, {}", u.host(), u.selector()));
-        // }
-
-        // if let Some(url_stack_ptr) = ballast.url_stack_ptr {
-        //     if url_stack_ptr > 0 {
-        //         let (first, rest) = ballast.url_stack.as_slices();
-
-        //         for u in first.iter().chain(rest).take(url_stack_ptr - 1) {
-        //             ui.button(format!("{}, {}", u.host(), u.selector()));
-        //         }
-        //     }
-        // }
     }
 }

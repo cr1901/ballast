@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-use std::ops::Add;
 use std::str::Lines;
 
 use eframe;
@@ -139,7 +137,7 @@ impl Ballast {
 impl eframe::App for Ballast {
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
         match ui_address_bar(self, ctx) {
-            Some(AddressBarAction::StartNewUrl) => {
+            Some(AddressBarAction::StartNewUrlBar) => {
                 if let Ok(nex_url) = NexUrl::try_from(&*self.url_string) {
                     self.nex_url = Some(nex_url);
                     self.start_new_url();
@@ -156,6 +154,20 @@ impl eframe::App for Ballast {
                         .show_progress(true),
                     ..Default::default()
                 });
+            }
+            Some(AddressBarAction::StartNewUrlBackFwd(u)) => {
+                self.url_string = u.to_string();
+                self.nex_url = Some(u);
+                self.get_previous_url();
+            }
+            Some(AddressBarAction::CancelLoad) => {
+                self.stop_url();
+            }
+            Some(AddressBarAction::StartHomePage) => {
+                if self.state == ControlFlow::Waiting {
+                    self.stop_url();
+                }
+                self.do_home_page();
             }
             None => {}
         }
@@ -194,8 +206,11 @@ impl eframe::App for Ballast {
 }
 
 enum AddressBarAction {
-    StartNewUrl,
+    StartNewUrlBar,
+    StartNewUrlBackFwd(NexUrl),
     Unsupported(&'static str),
+    CancelLoad,
+    StartHomePage
 }
 
 fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarAction> {
@@ -216,51 +231,46 @@ fn ui_address_bar(ballast: &mut Ballast, ctx: &Context) -> Option<AddressBarActi
                     .desired_width(width * 0.80)
                     .ui(ui);
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    action = Some(AddressBarAction::StartNewUrl);
+                    action = Some(AddressBarAction::StartNewUrlBar);
                 }
 
                 menu::bar(ui, |ui| {
                     if ui.button("\u{1f5d9}").clicked() && ballast.state == ControlFlow::Waiting {
-                        ballast.stop_url();
+                        action = Some(AddressBarAction::CancelLoad);
                     }
 
                     if ui.button("\u{1f3e0}").clicked() {
-                        if ballast.state == ControlFlow::Waiting {
-                            ballast.stop_url();
-                        }
-                        ballast.do_home_page();
+                        action = Some(AddressBarAction::StartHomePage);
                     }
 
                     // TODO: Figure out how menus can overflow their container.
                     // egui "does the right thing" here, but it's still rather
                     // magic to me...
                     // Menus have shadows, so they're a different egui Layer?
-                    ui.menu_button("\u{21a9}", |ui| {
-                        let mut clicked = None;
+                    let mut clicked = None;
+                    ui.menu_button("\u{21a9}\u{21aa}", |ui| {
                         for (i, u) in ballast.url_stack.iter() {
                             ui.set_max_width(200.0);
-                            if Some(i) == ballast.url_stack.ptr() {
-                                if Button::new(format!("\u{2705} nex://{}{}", u.host(), u.selector()))
+                            if Some(i.into()) == ballast.url_stack.ptr() {
+                                if Button::new(format!("\u{2705} {}", u.to_string()))
                                     .wrap_mode(egui::TextWrapMode::Extend)
                                     .ui(ui).clicked() {
-                                        clicked = Some(i);
+                                        clicked = Some((i, u.clone()));
                                     }
                             } else {
-                                if Button::new(format!("nex://{}{}", u.host(), u.selector()))
+                                if Button::new(format!("{}", u.to_string()))
                                     .wrap_mode(egui::TextWrapMode::Extend)
                                     .ui(ui).clicked() {
-                                        clicked = Some(i);
+                                        clicked = Some((i, u.clone()));
                                     }
                             }
                         }
-
-                        if let Some(i) = clicked {
-                            debug!(target: "nex-ballast-fg", "url clicked... {}", i);
-                        }
                     });
 
-                    if ui.menu_button("\u{21aa}", |ui| {}).response.clicked() {
-                        action = Some(AddressBarAction::Unsupported("Forward"));
+                    if let Some((i, u)) = clicked {
+                        ballast.url_stack.set_ptr(i);
+                        action = Some(AddressBarAction::StartNewUrlBackFwd(u));
+                        debug!(target: "nex-ballast-fg", "url clicked... {:?}", i);
                     }
 
                     if ui.button("\u{1f4be}").clicked() {
