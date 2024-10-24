@@ -1,6 +1,7 @@
 use std::str::Lines;
 
 use eframe;
+use eframe::egui::load::Bytes;
 use eframe::egui::menu::{self};
 use eframe::egui::{self, Align2, Button, Context, TextEdit, Ui, Widget};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
@@ -8,7 +9,7 @@ use log::{debug, warn};
 use url::Url;
 
 use crate::retrieval::CancelSend;
-use crate::url::UrlStack;
+use crate::url::{UrlStack, UrlType};
 
 use super::retrieval::{self, CmdSend, RespRecv};
 use super::url::NexUrl;
@@ -19,28 +20,17 @@ enum ControlFlow {
     TextDoc,
 }
 
-struct Document {
-    raw: String,
-    typ: DocType,
-}
-
-impl Default for Document {
-    fn default() -> Self {
-        Self {
-            raw: String::default(),
-            typ: DocType::Null,
-        }
-    }
-}
-
-enum DocType {
+/// Return type from BG thread; Null and Error will never be returned from it.
+pub enum Document {
+    /// Replacement for Option::None.
     Null,
-    Error,
+    Error(String),
     Nex(NexType),
 }
 
-enum NexType {
-    Directory { links: Vec<Option<Url>> },
+pub enum NexType {
+    Directory { raw: String, links: Vec<Option<Url>> },
+    Jpeg { raw: Bytes },
 }
 
 pub struct Ballast {
@@ -51,7 +41,7 @@ pub struct Ballast {
     url_string: String,
     doc: Document,
     /// Current URL.
-    nex_url: Option<NexUrl>,
+    curr_url: Option<UrlType>,
     /// History of visited URLs.
     url_stack: UrlStack,
     resp: Option<RespRecv>,
@@ -69,9 +59,9 @@ impl Ballast {
             cmd,
             cancel,
             url_string: String::new(),
-            nex_url: None,
+            curr_url: None,
             url_stack: UrlStack::new(),
-            doc: Document::default(),
+            doc: Document::Null,
             resp: None,
             toasts: Toasts::new()
                 .anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
@@ -79,31 +69,24 @@ impl Ballast {
         }
     }
 
-    fn clear_links(&mut self) {
-        match &mut self.doc.typ {
-            DocType::Nex(NexType::Directory { links }) => links.clear(),
-            _ => {}
-        }
-    }
-
     pub fn do_home_page(&mut self) {
         self.url_string = String::from("nex://nex.nightfall.city/");
-        self.nex_url = Some(
-            NexUrl::try_from("nex://nex.nightfall.city/")
-                .expect("home page should be a valid NEX URL"),
+        self.curr_url = Some(
+            UrlType::Nex(NexUrl::try_from("nex://nex.nightfall.city/")
+                .expect("home page should be a valid NEX URL")),
         );
         self.start_new_url();
     }
 
     fn start_new_url(&mut self) {
-        debug!(target: "nex-ballast-fg", "start_new_url {:?}", self.nex_url.as_ref().unwrap().to_string());
+        debug!(target: "nex-ballast-fg", "start_new_url {:?}", self.curr_url.as_ref().unwrap().to_string());
 
-        self.url_stack.push(self.nex_url.as_ref().unwrap().clone());
+        self.url_stack.push(self.curr_url.as_ref().unwrap().clone());
         self.do_url();
     }
 
     fn get_previous_url(&mut self) {
-        debug!(target: "nex-ballast-fg", "get_previous_url {:?}", self.nex_url.as_ref().unwrap().to_string());
+        debug!(target: "nex-ballast-fg", "get_previous_url {:?}", self.curr_url.as_ref().unwrap().to_string());
         self.do_url();
     }
 
@@ -114,8 +97,7 @@ impl Ballast {
         // self.url_string = url_string.clone();
         let _ = self
             .cmd
-            .send((self.nex_url.as_ref().unwrap().clone(), send));
-        self.clear_links();
+            .send((self.curr_url.as_ref().unwrap().clone(), send));
 
         self.state = ControlFlow::Waiting;
         self.resp = Some(recv);
@@ -132,8 +114,8 @@ impl eframe::App for Ballast {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         match ui_address_bar(self, ctx) {
             Some(AddressBarAction::StartNewUrlBar) => {
-                if let Ok(nex_url) = NexUrl::try_from(&*self.url_string) {
-                    self.nex_url = Some(nex_url);
+                if let Ok(curr_url) = NexUrl::try_from(&*self.url_string) {
+                    self.curr_url = Some(UrlType::Nex(curr_url));
                     self.start_new_url();
                 } else {
                     debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", &self.url_string);
@@ -151,7 +133,7 @@ impl eframe::App for Ballast {
             }
             Some(AddressBarAction::StartNewUrlBackFwd(u)) => {
                 self.url_string = u.to_string();
-                self.nex_url = Some(u);
+                self.curr_url = Some(u);
                 self.get_previous_url();
             }
             Some(AddressBarAction::CancelLoad) => {
@@ -172,26 +154,33 @@ impl eframe::App for Ballast {
                 if let Some(ref mut recv) = self.resp {
                     match recv.try_recv() {
                         Ok(Ok(recv)) => {
-                            self.doc.raw = recv;
-                            self.doc.typ = DocType::Nex(NexType::Directory { links: Vec::new() });
-                            self.clear_links();
-                            self.state = ControlFlow::TextDoc;
+                            self.doc = recv;
 
-                            if self.doc.raw.contains('\u{fffd}') {
-                                self.toasts.add(Toast {
-                                    text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
-                                    kind: ToastKind::Warning,
-                                    options: ToastOptions::default()
-                                        .duration_in_seconds(5.0)
-                                        .show_progress(true),
-                                    ..Default::default()
-                                });
+                            match &self.doc {
+                                Document::Nex(NexType::Directory { raw, .. }) => {
+                                    self.state = ControlFlow::TextDoc;
+
+                                    if raw.contains('\u{fffd}') {
+                                        self.toasts.add(Toast {
+                                            text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
+                                            kind: ToastKind::Warning,
+                                            options: ToastOptions::default()
+                                                .duration_in_seconds(5.0)
+                                                .show_progress(true),
+                                            ..Default::default()
+                                        });
+                                    }
+                                },
+                                /* Document::Nex(NexType::Jpeg { raw}) => {
+                                    unimplemented!()
+                                }, */
+                                _ => unreachable!()
                             }
+                            
                         }
                         Ok(Err(r)) => {
-                            self.doc.typ = DocType::Error;
-                            self.doc.raw = format!("Error resolving {}:\n{}", self.nex_url.as_ref().unwrap().to_string(), r.to_string());
-                            self.clear_links();
+                            let err_string = format!("Error resolving {}:\n{}", self.curr_url.as_ref().unwrap().to_string(), r.to_string());
+                            self.doc = Document::Error(err_string);
                             self.state = ControlFlow::TextDoc;
                         }
                         _ => {}
@@ -201,17 +190,14 @@ impl eframe::App for Ballast {
                 self.toasts.show(ctx);
             }
             ControlFlow::TextDoc => {
-                match self.doc {
-                    Document {
-                        ref raw,
-                        typ: DocType::Nex(NexType::Directory { ref mut links })
-                    } => {
+                match &mut self.doc {
+                    Document::Nex(NexType::Directory { ref mut raw, ref mut links }) => {
                         match ui_textdoc(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
                             Some(TextDocAction::StartNewUrl(url)) => {
-                                if let Ok(nex_url) = NexUrl::try_from(url.as_str()) {
-                                    debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), nex_url);
+                                if let Ok(curr_url) = NexUrl::try_from(url.as_str()) {
+                                    debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), curr_url);
                                     self.url_string = url.to_string();
-                                    self.nex_url = Some(nex_url);
+                                    self.curr_url = Some(UrlType::Nex(curr_url));
                                     self.start_new_url();
                                 } else {
                                     debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
@@ -220,15 +206,13 @@ impl eframe::App for Ballast {
                             None => {}
                         }
                     },
-                    Document {
-                        ref raw,
-                        typ: DocType::Error
-                    } => {
+                    Document::Error(raw) => {
                         for line in raw.lines() {
                             ui.label(egui::RichText::new(line).monospace());
                         }
                     },
-                    Document { typ: DocType::Null, .. } => {}
+                    Document::Null => {},
+                    _ => unimplemented!()
                 }
 
 
@@ -239,7 +223,7 @@ impl eframe::App for Ballast {
 
 enum AddressBarAction {
     StartNewUrlBar,
-    StartNewUrlBackFwd(NexUrl),
+    StartNewUrlBackFwd(UrlType),
     Unsupported(&'static str),
     CancelLoad,
     StartHomePage,

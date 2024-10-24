@@ -8,6 +8,19 @@ use url::Url;
 pub struct TryFromStringError;
 
 #[derive(Clone, Debug)]
+pub enum UrlType {
+    Nex(NexUrl)
+}
+
+impl ToString for UrlType {
+    fn to_string(&self) -> String {
+        match self {
+            Self::Nex(u) => u.to_string()
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct NexUrl {
     host: String,
     port: u16,
@@ -89,7 +102,7 @@ impl ToString for NexUrl {
 // }
 
 pub struct UrlStack {
-    stack: Vec<NexUrl>,
+    stack: Vec<UrlType>,
     ptr: Option<usize>,
 }
 
@@ -111,7 +124,7 @@ impl UrlStack {
         }
     }
 
-    pub fn push(&mut self, url: NexUrl) {
+    pub fn push(&mut self, url: UrlType) {
         match self.ptr {
             /* A push should remove all stack entries above it. */
             Some(ptr) => {
@@ -127,7 +140,7 @@ impl UrlStack {
         };
     }
 
-    pub fn truncate(&mut self, url: NexUrl, ptr: UrlStackPtr) {
+    pub fn truncate(&mut self, url: UrlType, ptr: UrlStackPtr) {
         assert!(self.ptr.is_some());
         assert!(ptr.0 < self.stack.len());
 
@@ -146,7 +159,7 @@ impl UrlStack {
         self.ptr.replace(ptr.0);
     }
 
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (UrlStackPtr, &NexUrl)> + '_> {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (UrlStackPtr, &UrlType)> + '_> {
         match self.ptr {
             Some(ptr) if self.stack.len() > 1 => {
                 let end = min(ptr + 5, self.stack.len());

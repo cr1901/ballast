@@ -16,15 +16,18 @@ use async_net::TcpStream;
 use eyre::Result;
 use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
 
-use super::url::NexUrl;
+use crate::app::NexType;
 
-pub type CmdSend = mpsc::Sender<(NexUrl, oneshot::Sender<Result<String>>)>;
-pub type RespRecv = oneshot::Receiver<Result<String>>;
+use super::url::{UrlType, NexUrl};
+use super::app::Document;
+
+pub type CmdSend = mpsc::Sender<(UrlType, oneshot::Sender<Result<Document>>)>;
+pub type RespRecv = oneshot::Receiver<Result<Document>>;
 pub type CancelSend = async_channel::Sender<()>;
 
-type CmdRecv = mpsc::Receiver<(NexUrl, RespSend)>;
+type CmdRecv = mpsc::Receiver<(UrlType, RespSend)>;
 type CancelRecv = async_channel::Receiver<()>;
-type RespSend = oneshot::Sender<Result<String>>;
+type RespSend = oneshot::Sender<Result<Document>>;
 
 pub fn spawn() -> (CmdSend, CancelSend) {
     let (cmd_send, cmd_recv) = mpsc::channel();
@@ -70,6 +73,50 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
         }))
     }
 
+    fn handle_nex(url: NexUrl, send: RespSend, cancel_recv: &CancelRecv) {
+        match tcp_connect((url.host(), url.port()), cancel_recv) {
+            Ok(mut conn) => {
+                if let Err(e) = tcp_write(&mut conn, url.selector()) {
+                    let _ = send.send(Err(e.into()));
+                    return;
+                }
+
+                let mut bytes = Vec::new();
+                if let Err(e) = tcp_read(conn, &mut bytes, cancel_recv) {
+                    if e.kind() == ErrorKind::Other {
+                        let e = match e.downcast::<ConnCancelled>() {
+                            Ok(_cc) => {
+                                debug!(target: "nex-ballast-bg", "conection cancelled");
+                                let _ = send.send(Err(ConnCancelled {}.into()));
+                                return;
+                            }
+                            Err(e) => e,
+                        };
+
+                        debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
+                        let _ = send.send(Err(e.into()));
+                        return;
+                    } else {
+                        debug!(target: "nex-ballast-bg", "unexpected error: {}", e);
+                        let _ = send.send(Err(e.into()));
+                        return;
+                    }
+                }
+
+                let nex_string = String::from_utf8_lossy(&mut bytes).into_owned();
+                // debug!(target: "nex-ballast-bg", "{}", nex_string);
+                let _ = send.send(Ok(Document::Nex(NexType::Directory {
+                    raw: nex_string,
+                    links: Vec::new()
+                })));
+            }
+            Err(e) => {
+                debug!(target: "nex-ballast-bg", "connect error {}", e);
+                let _ = send.send(Err(e.into()));
+            }
+        }
+    }
+
     loop {
         let (url, send) = if let Ok(cmd) = cmd_recv.recv() {
             cmd
@@ -85,43 +132,8 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
             let _ = cancel_recv.recv_blocking();
         }
 
-        match tcp_connect((url.host(), url.port()), &cancel_recv) {
-            Ok(mut conn) => {
-                if let Err(e) = tcp_write(&mut conn, url.selector()) {
-                    let _ = send.send(Err(e.into()));
-                    continue;
-                }
-
-                let mut bytes = Vec::new();
-                if let Err(e) = tcp_read(conn, &mut bytes, &cancel_recv) {
-                    if e.kind() == ErrorKind::Other {
-                        let e = match e.downcast::<ConnCancelled>() {
-                            Ok(_cc) => {
-                                debug!(target: "nex-ballast-bg", "conection cancelled");
-                                let _ = send.send(Err(ConnCancelled {}.into()));
-                                continue;
-                            }
-                            Err(e) => e,
-                        };
-
-                        debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
-                        let _ = send.send(Err(e.into()));
-                        continue;
-                    } else {
-                        debug!(target: "nex-ballast-bg", "unexpected error: {}", e);
-                        let _ = send.send(Err(e.into()));
-                        continue;
-                    }
-                }
-
-                let nex_string = String::from_utf8_lossy(&mut bytes).into_owned();
-                // debug!(target: "nex-ballast-bg", "{}", nex_string);
-                let _ = send.send(Ok(nex_string));
-            }
-            Err(e) => {
-                debug!(target: "nex-ballast-bg", "connect error {}", e);
-                let _ = send.send(Err(e.into()));
-            }
+        match url {
+            UrlType::Nex(url) => handle_nex(url, send, &cancel_recv),
         }
     }
 }
