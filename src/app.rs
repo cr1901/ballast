@@ -38,10 +38,13 @@ pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
     cancel: CancelSend,
+    /// Url in the address bar.
     url_string: String,
     raw: String,
     links: Vec<Option<Url>>,
+    /// Current URL.
     nex_url: Option<NexUrl>,
+    /// History of visited URLs.
     url_stack: UrlStack,
     resp: Option<RespRecv>,
     toasts: Toasts,
@@ -181,10 +184,28 @@ impl eframe::App for Ballast {
                             self.raw = recv;
                             self.links.clear();
                             self.state = ControlFlow::TextDoc;
+
+                            if self.raw.contains('\u{fffd}') {
+                                self.toasts.add(Toast {
+                                    text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
+                                    kind: ToastKind::Warning,
+                                    options: ToastOptions::default()
+                                        .duration_in_seconds(5.0)
+                                        .show_progress(true),
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        Ok(Err(r)) => {
+                            self.raw = format!("Error resolving {}:\n{}", self.nex_url.as_ref().unwrap().to_string(), r.to_string());
+                            self.links.clear();
+                            self.state = ControlFlow::TextDoc;
                         }
                         _ => {}
                     }
                 }
+
+                self.toasts.show(ctx);
             }
             ControlFlow::TextDoc => {
                 match ui_textdoc(ui, ctx, self.raw.lines(), &mut self.links, &self.url_string, &mut self.toasts) {
@@ -377,7 +398,15 @@ fn ui_textdoc(
                             }
                             Err(_) => {
                                 let abs_url = match Url::parse(addr_str) {
-                                    Ok(url) => url.join(&line[3..url_end]),
+                                    Ok(url) => {
+                                        if !url.path().ends_with('/') && !url.path().contains('.') {
+                                            let new_url = url.join(&format!("{}/{}", url.path(), &line[3..url_end]));
+                                            debug!(target: "nex-ballast-fg", "fixing up nex directory without trailing slash {:?} => {:?}", url, new_url);
+                                            new_url
+                                        } else {
+                                            url.join(&line[3..url_end])
+                                        }
+                                    }
                                     Err(_) => {
                                         links.push(None);
                                         ui.label(egui::RichText::new(line).monospace());

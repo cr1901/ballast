@@ -95,15 +95,18 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
                         let e = match e.downcast::<ConnCancelled>() {
                             Ok(_cc) => {
                                 debug!(target: "nex-ballast-bg", "conection cancelled");
+                                let _ = send.send(Err(ConnCancelled {}.into()));
                                 continue;
                             }
                             Err(e) => e,
                         };
 
                         debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
+                        let _ = send.send(Err(e.into()));
                         continue;
                     } else {
                         debug!(target: "nex-ballast-bg", "unexpected error: {}", e);
+                        let _ = send.send(Err(e.into()));
                         continue;
                     }
                 }
