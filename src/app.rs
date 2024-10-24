@@ -82,29 +82,14 @@ impl Ballast {
     }
 
     fn start_new_url(&mut self) {
-        // debug!(target: "nex-ballast-fg", "start_new_url {:?}", url.to_string());
+        debug!(target: "nex-ballast-fg", "start_new_url {:?}", self.nex_url.as_ref().unwrap().to_string());
 
         self.url_stack.push(self.nex_url.as_ref().unwrap().clone());
         self.do_url();
     }
 
     fn get_previous_url(&mut self) {
-        // debug!(target: "nex-ballast-fg", "start_new_url {:?}", url.to_string());
-
-        /* match self.url_stack_ptr {
-            None => {
-                unreachable!()
-            },
-            Some(ref mut ptr) => {
-                let len = self.url_stack.len();
-
-                assert!(*ptr < len);
-                *ptr -= 1;
-
-                self.nex_url = Some(self.url_stack[*ptr].clone());
-            }
-        } */
-
+        debug!(target: "nex-ballast-fg", "get_previous_url {:?}", self.nex_url.as_ref().unwrap().to_string());
         self.do_url();
     }
 
@@ -113,7 +98,7 @@ impl Ballast {
 
         // let url_string = url.to_string();
         // self.url_string = url_string.clone();
-        self.cmd
+        let _ = self.cmd
             .send((self.nex_url.as_ref().unwrap().clone(), send));
         self.links.clear();
         /* match self.doc {
@@ -138,7 +123,7 @@ impl Ballast {
 }
 
 impl eframe::App for Ballast {
-    fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         match ui_address_bar(self, ctx) {
             Some(AddressBarAction::StartNewUrlBar) => {
                 if let Ok(nex_url) = NexUrl::try_from(&*self.url_string) {
@@ -342,100 +327,62 @@ fn ui_textdoc(
         .show(ui, |ui| {
             for (i, line) in lines.enumerate() {
                 match links.get(i) {
-                    // FIXME: Need to handle links which don't end with extension
-                    // or '/'... they are currently relative to parent.
                     Some(Some(url)) if line.starts_with("=> ") => {
-                        let mut start_new = false;
-
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
-
-                            ui.label(egui::RichText::new("=> ").monospace());
-                            if ui.link(&line[3..url_end]).clicked() {
-                                start_new = true;
+                        match url.scheme() {
+                            "http" | "https" => ui_http(ui, &line),
+                            "nex" => {
+                                if ui_hyperlink(ui, &line) {
+                                    action = Some(TextDocAction::StartNewUrl(url.to_string()));
+                                    return;
+                                }
+                            },
+                            _ => {
+                                if ui_hyperlink(ui, &line) {
+                                    action = Some(TextDocAction::StartNewUrl(url.to_string()));
+                                    return;
+                                }
                             }
-
-                            if url_end < line.len() {
-                                ui.label(egui::RichText::new(&line[url_end..]).monospace());
-                            }
-                        });
-
-                        if start_new {
-                            action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                            return;
                         }
                     }
                     Some(Some(_)) => {
-                        unreachable!()
+                        unreachable!("links vector should have an entry for line {}, but doesn't", i);
                     }
                     Some(None) => {
                         ui.label(egui::RichText::new(line).monospace());
                     }
                     None if line.starts_with("=> ") => {
-                        assert!(links.len() == i);
-                        let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
+                        assert!(links.len() == i);	
 
-                        match Url::parse(&line[3..url_end]) {
-                            Ok(url) => {
-                                let mut start_new = false;
-
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 0.0;
-
-                                    ui.label(egui::RichText::new("=> ").monospace());
-                                    if ui.link(&line[3..url_end]).clicked() {
-                                        start_new = true;
+                        // let (url_port, _) = url_portion(line);
+                        match resolve_line(&line, &addr_str) {
+                            Some(url) => {
+                                match url.scheme() {
+                                    "http" | "https" => ui_http(ui, &line),
+                                    "nex" => {
+                                        if ui_hyperlink(ui, &line) {
+                                            action = Some(TextDocAction::StartNewUrl(url.to_string()));
+                                            return;
+                                        }
+                                    },
+                                    _ => {
+                                        if ui_hyperlink(ui, &line) {
+                                            action = Some(TextDocAction::StartNewUrl(url.to_string()));
+                                            return;
+                                        }
                                     }
-
-                                    if url_end < line.len() {
-                                        ui.label(egui::RichText::new(&line[url_end..]).monospace());
-                                    }
-                                });
-
-                                if start_new {
-                                    action = Some(TextDocAction::StartNewUrl(url.to_string()));
-                                    return;
                                 }
 
                                 links.push(Some(url.clone()));
-                            }
-                            Err(_) => {
-                                let abs_url = match Url::parse(addr_str) {
-                                    Ok(url) => {
-                                        if !url.path().ends_with('/') && !url.path().contains('.') {
-                                            let new_url = url.join(&format!("{}/{}", url.path(), &line[3..url_end]));
-                                            debug!(target: "nex-ballast-fg", "fixing up nex directory without trailing slash {:?} => {:?}", url, new_url);
-                                            new_url
-                                        } else {
-                                            url.join(&line[3..url_end])
-                                        }
-                                    }
-                                    Err(_) => {
-                                        links.push(None);
-                                        ui.label(egui::RichText::new(line).monospace());
-                                        continue;
-                                    }
-                                };
-                                // FIXME: Render relative links and start new url here too?
-                                debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
-                                match abs_url
-                                {
-                                    Ok(url) => {
-                                        links.push(Some(url.clone()));
-                                    }
-                                    Err(_) => {
-                                        links.push(None);
-                                        ui.label(egui::RichText::new(line).monospace());
-                                        continue;
-                                    }
-                                }
+                            },
+                            None => {
+                                links.push(None);
+                                ui.label(egui::RichText::new(line).monospace());
                             }
                         }
                     }
                     None => {
                         links.push(None);
-                        ui.label(egui::RichText::new(format!("{}\n", line)).monospace());
+                        ui.label(egui::RichText::new(format!("{}", line)).monospace());
                     }
                 }
             }
@@ -444,4 +391,85 @@ fn ui_textdoc(
         });
 
     action
+}
+
+fn ui_http(ui: &mut Ui, line: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (url_port, url_end) = url_portion(line);
+
+        ui.label(egui::RichText::new("=> ").monospace());
+        ui.hyperlink(url_port);
+
+        if url_end < line.len() {
+            ui.label(egui::RichText::new(url_port).monospace());
+        }
+    });
+}
+
+fn ui_hyperlink(ui: &mut Ui, line: &str) -> bool {
+    let mut start_new = false;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (url_port, url_end) = url_portion(line);
+
+        ui.label(egui::RichText::new("=> ").monospace());
+        if ui.link(url_port).clicked() {
+            start_new = true;
+        }
+
+        if url_end < line.len() {
+            ui.label(egui::RichText::new(url_port).monospace());
+        }
+    });
+
+    start_new
+}
+
+fn url_portion(line: &str) -> (&str, usize) {
+    let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
+    (&line[3..url_end], url_end)
+}
+
+
+fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
+    let (url_port, _) = url_portion(line);
+
+    match Url::parse(url_port) {
+        Ok(url) => {
+            Some(url)
+        }
+        Err(_) => {
+            resolve_relative(addr_str, url_port)
+        }
+    } 
+}
+
+fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
+    let abs_url = match Url::parse(addr_str) {
+        Ok(url) => {
+            if !url.path().ends_with('/') && !url.path().contains('.') {
+                let new_url = url.join(&format!("{}/{}", url.path(), path));
+                debug!(target: "nex-ballast-fg", "fixing up nex directory without trailing slash {:?} => {:?}", url, new_url);
+                new_url
+            } else {
+                url.join(path)
+            }
+        }
+        Err(_) => {
+            return None;
+        }
+    };
+    // FIXME: Render relative links and start new url here too?
+    debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
+    match abs_url
+    {
+        Ok(url) => {
+            Some(url)
+        }
+        Err(_) => {
+            None
+        }
+    }
 }

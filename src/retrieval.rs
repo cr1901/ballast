@@ -87,7 +87,10 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
 
         match tcp_connect((url.host(), url.port()), &cancel_recv) {
             Ok(mut conn) => {
-                tcp_write(&mut conn, url.selector());
+                if let Err(e) = tcp_write(&mut conn, url.selector()) {
+                    let _ = send.send(Err(e.into()));
+                    continue;
+                }
 
                 let mut bytes = Vec::new();
                 if let Err(e) = tcp_read(conn, &mut bytes, &cancel_recv) {

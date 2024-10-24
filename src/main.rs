@@ -16,9 +16,9 @@ fn main() -> Result<(), eframe::Error> {
     };
 
     eframe::run_native(
-        "ballast",
+        "Ballast",
         options,
-        Box::new(|cc| {
+        Box::new(|_cc| {
             let mut app = app::Ballast::new();
             app.do_home_page();
 
