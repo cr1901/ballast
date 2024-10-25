@@ -12,6 +12,17 @@ pub enum UrlType {
     Nex(NexUrl)
 }
 
+impl TryFrom<&str> for UrlType {
+    type Error = TryFromStringError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match Url::parse(&value).map_err(|_| TryFromStringError)?.scheme() {
+            "nex" => Ok(UrlType::Nex(NexUrl::try_from(value)?)),
+            _ => Err(TryFromStringError)
+        }
+    }
+}
+
 impl ToString for UrlType {
     fn to_string(&self) -> String {
         match self {

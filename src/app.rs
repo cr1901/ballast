@@ -39,6 +39,7 @@ pub struct Ballast {
     cancel: CancelSend,
     /// Url in the address bar.
     url_string: String,
+    /// In-memory repr of a document.
     doc: Document,
     /// Current URL.
     curr_url: Option<UrlType>,
@@ -114,11 +115,13 @@ impl eframe::App for Ballast {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         match ui_address_bar(self, ctx) {
             Some(AddressBarAction::StartNewUrlBar) => {
-                if let Ok(curr_url) = NexUrl::try_from(&*self.url_string) {
-                    self.curr_url = Some(UrlType::Nex(curr_url));
-                    self.start_new_url();
-                } else {
-                    debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", &self.url_string);
+                match UrlType::try_from(self.url_string.as_str()) {
+                    Ok(url @ UrlType::Nex(_)) => {
+                        self.url_string = url.to_string();
+                        self.curr_url = Some(url);
+                        self.start_new_url();
+                    }
+                    Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", self.url_string)
                 }
             }
             Some(AddressBarAction::Unsupported(msg)) => {
@@ -192,15 +195,15 @@ impl eframe::App for Ballast {
             ControlFlow::TextDoc => {
                 match &mut self.doc {
                     Document::Nex(NexType::Directory { ref mut raw, ref mut links }) => {
-                        match ui_textdoc(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
+                        match ui_nexdir(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
                             Some(TextDocAction::StartNewUrl(url)) => {
-                                if let Ok(curr_url) = NexUrl::try_from(url.as_str()) {
-                                    debug!(target: "nex-ballast-fg", "url parsed as NEX... {}, {:?}", url.as_str(), curr_url);
-                                    self.url_string = url.to_string();
-                                    self.curr_url = Some(UrlType::Nex(curr_url));
-                                    self.start_new_url();
-                                } else {
-                                    debug!(target: "nex-ballast-fg", "url didn't parse as NEX... {:?}", url.as_str());
+                                match UrlType::try_from(url.as_str()) {
+                                    Ok(url @ UrlType::Nex(_)) => {
+                                        self.url_string = url.to_string();
+                                        self.curr_url = Some(url);
+                                        self.start_new_url();
+                                    }
+                                    Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", url.as_str())
                                 }
                             },
                             None => {}
@@ -322,7 +325,7 @@ enum TextDocAction {
     StartNewUrl(String),
 }
 
-fn ui_textdoc(
+fn ui_nexdir(
     ui: &mut Ui,
     ctx: &eframe::egui::Context,
     lines: Lines,
@@ -441,6 +444,7 @@ fn split_directory(line: &str) -> (&str, &str, &str) {
     (&line[..3], &line[3..url_end], &line[url_end..])
 }
 
+// FIXME: nex-specific right now... needs refactor.
 fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
     let (_, url_port, _) = split_directory(line);
 
@@ -450,6 +454,7 @@ fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
     }
 }
 
+// FIXME: nex-specific right now... needs refactor.
 fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
     let abs_url = match Url::parse(addr_str) {
         Ok(url) => {
@@ -465,7 +470,6 @@ fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
             return None;
         }
     };
-    // FIXME: Render relative links and start new url here too?
     debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
     match abs_url {
         Ok(url) => Some(url),
