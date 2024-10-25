@@ -10,7 +10,7 @@ pages in a browser.
 Right now, text files and directories are displayed. Back and forward, cancel,
 and return to [home](https://nightfall.city/) are also implemented.
 
-Images, Download, Find Text, and _possibly_ Gopher support will come later.
+Download, Find Text, and _possibly_ Gopher support will come later.
 
 ## Installation
 

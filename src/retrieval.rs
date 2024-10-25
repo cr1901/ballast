@@ -102,13 +102,16 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
                         return;
                     }
                 }
-
-                let nex_string = String::from_utf8_lossy(&mut bytes).into_owned();
                 // debug!(target: "nex-ballast-bg", "{}", nex_string);
-                let _ = send.send(Ok(Document::Nex(NexType::Directory {
-                    raw: nex_string,
-                    links: Vec::new()
-                })));
+
+                if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
+                    let _ = send.send(Ok(Document::Nex(NexType::Jpeg { raw: bytes.into() })));
+                } else {
+                    let _ = send.send(Ok(Document::Nex(NexType::Directory {
+                        raw: String::from_utf8_lossy(&mut bytes).into_owned(),
+                        links: Vec::new()
+                    })));
+                }
             }
             Err(e) => {
                 debug!(target: "nex-ballast-bg", "connect error {}", e);

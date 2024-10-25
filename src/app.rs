@@ -3,7 +3,7 @@ use std::str::Lines;
 use eframe;
 use eframe::egui::load::Bytes;
 use eframe::egui::menu::{self};
-use eframe::egui::{self, Align2, Button, Context, TextEdit, Ui, Widget};
+use eframe::egui::{self, Align2, Button, Context, ImageSource, TextEdit, Ui, Widget};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
@@ -18,6 +18,7 @@ use super::url::NexUrl;
 enum ControlFlow {
     Waiting,
     TextDoc,
+    Image
 }
 
 /// Return type from BG thread; Null and Error will never be returned from it.
@@ -174,9 +175,10 @@ impl eframe::App for Ballast {
                                         });
                                     }
                                 },
-                                /* Document::Nex(NexType::Jpeg { raw}) => {
-                                    unimplemented!()
-                                }, */
+                                Document::Nex(NexType::Jpeg { .. }) => {
+                                    ctx.forget_image("bytes://ballast-image");
+                                    self.state = ControlFlow::Image;
+                                }
                                 _ => unreachable!()
                             }
                             
@@ -219,6 +221,19 @@ impl eframe::App for Ballast {
                 }
 
 
+            },
+            ControlFlow::Image => {
+                match &mut self.doc {
+                    Document::Nex(NexType::Jpeg { ref raw}) => {
+                        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                            ui.image(ImageSource::Bytes {
+                                uri: "bytes://ballast-image".into(),
+                                bytes: raw.clone()
+                            });
+                        });
+                    },
+                    _ => unreachable!()
+                }
             }
         });
     }
