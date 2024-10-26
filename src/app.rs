@@ -3,7 +3,7 @@ use std::str::Lines;
 use eframe;
 use eframe::egui::load::Bytes;
 use eframe::egui::menu::{self};
-use eframe::egui::{self, Align2, Button, Context, ImageSource, TextEdit, Ui, Widget};
+use eframe::egui::{self, Align2, Button, Context, Id, ImageSource, TextEdit, Ui, Vec2, Widget};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
@@ -17,8 +17,8 @@ use super::url::NexUrl;
 #[derive(PartialEq)]
 enum ControlFlow {
     Waiting,
-    TextDoc,
-    Image
+    Rendering,
+    Presenting,
 }
 
 /// Return type from BG thread; Null and Error will never be returned from it.
@@ -162,7 +162,7 @@ impl eframe::App for Ballast {
 
                             match &self.doc {
                                 Document::Nex(NexType::Directory { raw, .. }) => {
-                                    self.state = ControlFlow::TextDoc;
+                                    self.state = ControlFlow::Presenting;
 
                                     if raw.contains('\u{fffd}') {
                                         self.toasts.add(Toast {
@@ -177,7 +177,7 @@ impl eframe::App for Ballast {
                                 },
                                 Document::Nex(NexType::Jpeg { .. }) => {
                                     ctx.forget_image("bytes://ballast-image");
-                                    self.state = ControlFlow::Image;
+                                    self.state = ControlFlow::Presenting;
                                 }
                                 _ => unreachable!()
                             }
@@ -186,7 +186,7 @@ impl eframe::App for Ballast {
                         Ok(Err(r)) => {
                             let err_string = format!("Error resolving {}:\n{}", self.curr_url.as_ref().unwrap().to_string(), r.to_string());
                             self.doc = Document::Error(err_string);
-                            self.state = ControlFlow::TextDoc;
+                            self.state = ControlFlow::Presenting;
                         }
                         _ => {}
                     }
@@ -194,7 +194,11 @@ impl eframe::App for Ballast {
 
                 self.toasts.show(ctx);
             }
-            ControlFlow::TextDoc => {
+            ControlFlow::Rendering => {
+                unimplemented!()
+            },
+            ControlFlow::Presenting => {
+                /* let do_find = false; */
                 match &mut self.doc {
                     Document::Nex(NexType::Directory { ref mut raw, ref mut links }) => {
                         match ui_nexdir(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
@@ -211,6 +215,14 @@ impl eframe::App for Ballast {
                             None => {}
                         }
                     },
+                    Document::Nex(NexType::Jpeg { ref raw}) => {
+                        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                            ui.image(ImageSource::Bytes {
+                                uri: "bytes://ballast-image".into(),
+                                bytes: raw.clone()
+                            });
+                        });
+                    },
                     Document::Error(raw) => {
                         for line in raw.lines() {
                             ui.label(egui::RichText::new(line).monospace());
@@ -220,21 +232,8 @@ impl eframe::App for Ballast {
                     _ => unimplemented!()
                 }
 
-
+                /* TODO: Find logic should go here, and be coupled to TextDoc variant? */
             },
-            ControlFlow::Image => {
-                match &mut self.doc {
-                    Document::Nex(NexType::Jpeg { ref raw}) => {
-                        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                            ui.image(ImageSource::Bytes {
-                                uri: "bytes://ballast-image".into(),
-                                bytes: raw.clone()
-                            });
-                        });
-                    },
-                    _ => unreachable!()
-                }
-            }
         });
     }
 }
