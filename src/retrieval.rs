@@ -16,18 +16,17 @@ use async_net::TcpStream;
 use eyre::Result;
 use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
 
-use crate::app::NexType;
-
 use super::url::{UrlType, NexUrl};
-use super::app::Document;
 
-pub type CmdSend = mpsc::Sender<(UrlType, oneshot::Sender<Result<Document>>)>;
-pub type RespRecv = oneshot::Receiver<Result<Document>>;
+type Raw = Vec<u8>;
+
+pub type CmdSend = mpsc::Sender<(UrlType, oneshot::Sender<Result<Raw>>)>;
+pub type RespRecv = oneshot::Receiver<Result<Raw>>;
 pub type CancelSend = async_channel::Sender<()>;
 
 type CmdRecv = mpsc::Receiver<(UrlType, RespSend)>;
 type CancelRecv = async_channel::Receiver<()>;
-type RespSend = oneshot::Sender<Result<Document>>;
+type RespSend = oneshot::Sender<Result<Raw>>;
 
 pub fn spawn() -> (CmdSend, CancelSend) {
     let (cmd_send, cmd_recv) = mpsc::channel();
@@ -104,14 +103,7 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
                 }
                 // debug!(target: "nex-ballast-bg", "{}", nex_string);
 
-                if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
-                    let _ = send.send(Ok(Document::Nex(NexType::Jpeg { raw: bytes.into() })));
-                } else {
-                    let _ = send.send(Ok(Document::Nex(NexType::Directory {
-                        raw: String::from_utf8_lossy(&mut bytes).into_owned(),
-                        links: Vec::new()
-                    })));
-                }
+                send.send(Ok(bytes));
             }
             Err(e) => {
                 debug!(target: "nex-ballast-bg", "connect error {}", e);

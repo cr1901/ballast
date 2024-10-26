@@ -3,7 +3,7 @@ use std::str::Lines;
 use eframe;
 use eframe::egui::load::Bytes;
 use eframe::egui::menu::{self};
-use eframe::egui::{self, Align2, Button, Context, Id, ImageSource, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{self, Align2, Button, Context, ImageSource, TextEdit, Ui, Widget, WidgetText};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
 use url::Url;
@@ -18,7 +18,7 @@ use super::url::NexUrl;
 enum ControlFlow {
     Waiting,
     Rendering,
-    Presenting,
+    Presenting
 }
 
 /// Return type from BG thread; Null and Error will never be returned from it.
@@ -26,11 +26,7 @@ pub enum Document {
     /// Replacement for Option::None.
     Null,
     Error(String),
-    Nex(NexType),
-}
-
-pub enum NexType {
-    Directory { raw: String, links: Vec<Option<Url>> },
+    NexDirectory { raw: String, links: Vec<Option<Url>> },
     Jpeg { raw: Bytes },
 }
 
@@ -110,6 +106,17 @@ impl Ballast {
             warn!(target: "nex-ballast-fg", "unexpected cancel request in queue");
         }
     }
+
+    fn toast<T>(&mut self, text: T, kind: ToastKind) where T: Into<WidgetText> {
+        self.toasts.add(Toast {
+            text: text.into(),
+            kind,
+            options: ToastOptions::default()
+                .duration_in_seconds(5.0)
+                .show_progress(true),
+            ..Default::default()
+        });
+    }
 }
 
 impl eframe::App for Ballast {
@@ -126,14 +133,7 @@ impl eframe::App for Ballast {
                 }
             }
             Some(AddressBarAction::Unsupported(msg)) => {
-                self.toasts.add(Toast {
-                    text: format!("Unsupported feature: {}", msg).into(),
-                    kind: ToastKind::Info,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(5.0)
-                        .show_progress(true),
-                    ..Default::default()
-                });
+                self.toast(format!("Unsupported feature: {}", msg), ToastKind::Info);
             }
             Some(AddressBarAction::StartNewUrlBackFwd(u)) => {
                 self.url_string = u.to_string();
@@ -152,37 +152,27 @@ impl eframe::App for Ballast {
             None => {}
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| match self.state {
+        egui::CentralPanel::default().show(ctx, |ui| match &self.state {
             ControlFlow::Waiting => {
                 ui_spinner(ui);
                 if let Some(ref mut recv) = self.resp {
                     match recv.try_recv() {
-                        Ok(Ok(recv)) => {
-                            self.doc = recv;
-
-                            match &self.doc {
-                                Document::Nex(NexType::Directory { raw, .. }) => {
-                                    self.state = ControlFlow::Presenting;
-
-                                    if raw.contains('\u{fffd}') {
-                                        self.toasts.add(Toast {
-                                            text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
-                                            kind: ToastKind::Warning,
-                                            options: ToastOptions::default()
-                                                .duration_in_seconds(5.0)
-                                                .show_progress(true),
-                                            ..Default::default()
-                                        });
+                        Ok(Ok(bytes)) => {
+                            self.doc = match &self.curr_url {
+                                Some(UrlType::Nex(url)) => {
+                                    if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
+                                        Document::Jpeg { raw: bytes.into() }
+                                    } else {
+                                        Document::NexDirectory {
+                                            raw: String::from_utf8_lossy(&bytes).into_owned(),
+                                            links: Vec::new()
+                                        }
                                     }
-                                },
-                                Document::Nex(NexType::Jpeg { .. }) => {
-                                    ctx.forget_image("bytes://ballast-image");
-                                    self.state = ControlFlow::Presenting;
                                 }
-                                _ => unreachable!()
-                            }
-                            
-                        }
+                                None => unreachable!()
+                            };
+                            self.state = ControlFlow::Rendering;
+                        },
                         Ok(Err(r)) => {
                             let err_string = format!("Error resolving {}:\n{}", self.curr_url.as_ref().unwrap().to_string(), r.to_string());
                             self.doc = Document::Error(err_string);
@@ -191,16 +181,28 @@ impl eframe::App for Ballast {
                         _ => {}
                     }
                 }
-
-                self.toasts.show(ctx);
             }
             ControlFlow::Rendering => {
-                unimplemented!()
+                ui_spinner(ui);
+                match &self.doc {
+                    Document::NexDirectory { raw, .. } => {
+                        self.state = ControlFlow::Presenting;
+
+                        if raw.contains('\u{fffd}') {
+                            self.toast("UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.", ToastKind::Warning);
+                        }
+                    },
+                    Document::Jpeg { .. } => {
+                        ctx.forget_image("bytes://ballast-image");
+                        self.state = ControlFlow::Presenting;
+                    }
+                    _ => unreachable!()
+                }
             },
             ControlFlow::Presenting => {
                 /* let do_find = false; */
                 match &mut self.doc {
-                    Document::Nex(NexType::Directory { ref mut raw, ref mut links }) => {
+                    Document::NexDirectory { ref mut raw, ref mut links } => {
                         match ui_nexdir(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
                             Some(TextDocAction::StartNewUrl(url)) => {
                                 match UrlType::try_from(url.as_str()) {
@@ -215,7 +217,7 @@ impl eframe::App for Ballast {
                             None => {}
                         }
                     },
-                    Document::Nex(NexType::Jpeg { ref raw}) => {
+                    Document::Jpeg { ref raw} => {
                         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                             ui.image(ImageSource::Bytes {
                                 uri: "bytes://ballast-image".into(),
