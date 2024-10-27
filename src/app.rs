@@ -130,6 +130,10 @@ impl eframe::App for Ballast {
                 self.toast(format!("Unsupported feature: {}", msg), ToastKind::Info);
             }
             Some(AddressBarAction::StartNewUrlBackFwd(u)) => {
+                if self.state == ControlFlow::Waiting {
+                    self.stop_url();
+                }
+
                 self.url_string = u.to_string();
                 self.curr_url = Some(u);
                 self.get_previous_url();

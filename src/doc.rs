@@ -7,14 +7,6 @@ use super::url::UrlType as OurUrl;
 
 mod nex;
 
-/* pub enum Document {
-    /// Replacement for Option::None.
-    Null,
-    Error(String),
-    NexDirectory { raw: String, links: Vec<Option<Url>> },
-    Jpeg { raw: Bytes },
-} */
-
 impl From<(Result<Vec<u8>, Report>, &Option<OurUrl>)> for Box<dyn Document> {
     fn from((recv, url): (Result<Vec<u8>, Report>, &Option<OurUrl>)) -> Self {
         match (recv, url) {

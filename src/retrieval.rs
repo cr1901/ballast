@@ -1,20 +1,17 @@
-use async_net::AsyncToSocketAddrs;
-use futures_lite::AsyncWriteExt;
+
 use log::debug;
 use log::warn;
 use oneshot;
 
 use std::error;
 use std::fmt;
-use std::io;
 use std::io::ErrorKind;
 use std::sync::mpsc;
 use std::thread;
 
 use async_channel;
-use async_net::TcpStream;
 use eyre::Result;
-use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
+
 
 use super::url::{NexUrl, UrlType};
 
@@ -37,81 +34,7 @@ pub fn spawn() -> (CmdSend, CancelSend) {
     (cmd_send, cancel_send)
 }
 
-/* FIXME: Damnit, I did not want to bring in an async executor, but in Rust,
-   you're expected to instead of doing select loops. I hope one day I can
-   rewrite this so there's a chance it'll run on [Windows 95](https://seri.tools/blog/announcing-rust9x/)
-   for the real retro goodness.
-
-   At the very least, mspc channels rely on futexes/wait-for-address-to-change
-   functionality: https://github.com/rust-lang/rust/blob/93742bd782e7142899d782f663448ab51a3eec9b/library/std/src/sys/sync/thread_parking/futex.rs#L55
-   Does Windows 95 have this?
-*/
 fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
-    fn tcp_connect<A>(url: A, cancel_recv: &CancelRecv) -> Result<TcpStream, io::Error>
-    where
-        A: AsyncToSocketAddrs,
-    {
-        block_on(TcpStream::connect(url).or(async {
-            let _ = cancel_recv.recv().await;
-            Err(io::Error::other(ConnCancelled {}))
-        }))
-    }
-
-    fn tcp_write(conn: &mut TcpStream, buf: &str) -> Result<usize, io::Error> {
-        block_on(conn.write(format!("{}\n", buf).as_bytes()))
-    }
-
-    fn tcp_read(
-        mut conn: TcpStream,
-        buf: &mut Vec<u8>,
-        cancel_recv: &CancelRecv,
-    ) -> Result<usize, io::Error> {
-        block_on(conn.read_to_end(buf).or(async {
-            let _ = cancel_recv.recv().await;
-            Err(io::Error::other(ConnCancelled {}))
-        }))
-    }
-
-    fn handle_nex(url: NexUrl, send: RespSend, cancel_recv: &CancelRecv) {
-        match tcp_connect((url.host(), url.port()), cancel_recv) {
-            Ok(mut conn) => {
-                if let Err(e) = tcp_write(&mut conn, url.selector()) {
-                    let _ = send.send(Err(e.into()));
-                    return;
-                }
-
-                let mut bytes = Vec::new();
-                if let Err(e) = tcp_read(conn, &mut bytes, cancel_recv) {
-                    if e.kind() == ErrorKind::Other {
-                        let e = match e.downcast::<ConnCancelled>() {
-                            Ok(_cc) => {
-                                debug!(target: "nex-ballast-bg", "conection cancelled");
-                                let _ = send.send(Err(ConnCancelled {}.into()));
-                                return;
-                            }
-                            Err(e) => e,
-                        };
-
-                        debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
-                        let _ = send.send(Err(e.into()));
-                        return;
-                    } else {
-                        debug!(target: "nex-ballast-bg", "unexpected error: {}", e);
-                        let _ = send.send(Err(e.into()));
-                        return;
-                    }
-                }
-                // debug!(target: "nex-ballast-bg", "{}", nex_string);
-
-                send.send(Ok(bytes));
-            }
-            Err(e) => {
-                debug!(target: "nex-ballast-bg", "connect error {}", e);
-                let _ = send.send(Err(e.into()));
-            }
-        }
-    }
-
     loop {
         let (url, send) = if let Ok(cmd) = cmd_recv.recv() {
             cmd
@@ -128,7 +51,7 @@ fn bg_thread(cmd_recv: CmdRecv, cancel_recv: CancelRecv) {
         }
 
         match url {
-            UrlType::Nex(url) => handle_nex(url, send, &cancel_recv),
+            UrlType::Nex(url) => nex::handle(url, send, &cancel_recv),
         }
     }
 }
@@ -143,3 +66,89 @@ impl fmt::Display for ConnCancelled {
 }
 
 impl error::Error for ConnCancelled {}
+
+/* FIXME: Damnit, I did not want to bring in an async executor, but in Rust,
+   you're expected to instead of doing select loops. I hope one day I can
+   rewrite this so there's a chance it'll run on [Windows 95](https://seri.tools/blog/announcing-rust9x/)
+   for the real retro goodness.
+
+   At the very least, mspc channels rely on futexes/wait-for-address-to-change
+   functionality: https://github.com/rust-lang/rust/blob/93742bd782e7142899d782f663448ab51a3eec9b/library/std/src/sys/sync/thread_parking/futex.rs#L55
+   Does Windows 95 have this?
+*/
+mod nex {
+    use super::{NexUrl, RespSend, CancelRecv, ConnCancelled, debug, ErrorKind};
+
+    use async_net::AsyncToSocketAddrs;
+    use async_net::TcpStream;
+    use futures_lite::AsyncWriteExt;
+    use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
+
+    use std::io;
+
+    
+    fn connect<A>(url: A, cancel_recv: &CancelRecv) -> Result<TcpStream, io::Error>
+    where
+        A: AsyncToSocketAddrs,
+    {
+        block_on(TcpStream::connect(url).or(async {
+            let _ = cancel_recv.recv().await;
+            Err(io::Error::other(ConnCancelled {}))
+        }))
+    }
+
+    fn write(conn: &mut TcpStream, buf: &str) -> Result<usize, io::Error> {
+        block_on(conn.write(format!("{}\n", buf).as_bytes()))
+    }
+
+    fn read(
+        mut conn: TcpStream,
+        buf: &mut Vec<u8>,
+        cancel_recv: &CancelRecv,
+    ) -> Result<usize, io::Error> {
+        block_on(conn.read_to_end(buf).or(async {
+            let _ = cancel_recv.recv().await;
+            Err(io::Error::other(ConnCancelled {}))
+        }))
+    }
+
+    pub(super) fn handle(url: NexUrl, send: RespSend, cancel_recv: &CancelRecv) {
+        match connect((url.host(), url.port()), cancel_recv) {
+            Ok(mut conn) => {
+                if let Err(e) = write(&mut conn, url.selector()) {
+                    let _ = send.send(Err(e.into()));
+                    return;
+                }
+    
+                let mut bytes = Vec::new();
+                if let Err(e) = read(conn, &mut bytes, cancel_recv) {
+                    if e.kind() == ErrorKind::Other {
+                        let e = match e.downcast::<ConnCancelled>() {
+                            Ok(_cc) => {
+                                debug!(target: "nex-ballast-bg", "conection cancelled");
+                                let _ = send.send(Err(ConnCancelled {}.into()));
+                                return;
+                            }
+                            Err(e) => e,
+                        };
+    
+                        debug!(target: "nex-ballast-bg", "unexpected ErrorKind::Other: {}", e);
+                        let _ = send.send(Err(e.into()));
+                        return;
+                    } else {
+                        debug!(target: "nex-ballast-bg", "unexpected error: {}", e);
+                        let _ = send.send(Err(e.into()));
+                        return;
+                    }
+                }
+                // debug!(target: "nex-ballast-bg", "{}", nex_string);
+    
+                send.send(Ok(bytes));
+            }
+            Err(e) => {
+                debug!(target: "nex-ballast-bg", "connect error {}", e);
+                let _ = send.send(Err(e.into()));
+            }
+        }
+    }
+}
