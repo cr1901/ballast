@@ -27,18 +27,51 @@ impl Directory {
 }
 
 impl Document for Directory {
-    fn render(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn init(&mut self, _ui: &mut Ui, _ctx: &Context) -> AppAction {
+        let mut action = AppAction::None;
+
         if self.raw.contains('\u{fffd}') {
-            return AppAction::Toast {
+            action = AppAction::Toast {
                 text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
                 kind: ToastKind::Warning
             };
         }
 
-        AppAction::None
+        // TODO: Haven't decided yet whether to bother rendering for a single
+        // call... right now spinner overrides I think.
+        for (i, line) in self.raw.lines().enumerate() {
+            if let None = self.links.get(i) {
+                if line.starts_with("=> ") {
+                    assert!(self.links.len() == i);
+
+                    // let (url_port, _) = split_directory(line);
+                    match resolve_line(&line, &self.addr) {
+                        Some(url) => {
+                            /* if let Some(u) = ui_hyperlink(ui, &line, &url) {
+                                action = AppAction::StartNewUrl(u);
+                                break;
+                            } */
+
+                            self.links.push(Some(url.clone()));
+                        }
+                        None => {
+                            // ui.label(egui::RichText::new(line).monospace());
+                            self.links.push(None);
+                        }
+                    }
+                } else {
+                    // ui.label(egui::RichText::new(line).monospace());
+                    self.links.push(None);
+                }
+            } else {
+                unreachable!()
+            }
+        }
+
+        action
     }
 
-    fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn present(&mut self, ui: &mut Ui, _ctx: &Context) -> AppAction {
         let mut action = AppAction::None;
 
         egui::ScrollArea::vertical()
@@ -61,29 +94,7 @@ impl Document for Directory {
                         Some(None) => {
                             ui.label(egui::RichText::new(line).monospace());
                         }
-                        None if line.starts_with("=> ") => {
-                            assert!(self.links.len() == i);
-
-                            // let (url_port, _) = split_directory(line);
-                            match resolve_line(&line, &self.addr) {
-                                Some(url) => {
-                                    if let Some(u) = ui_hyperlink(ui, &line, &url) {
-                                        action = AppAction::StartNewUrl(u);
-                                        return;
-                                    }
-
-                                    self.links.push(Some(url.clone()));
-                                }
-                                None => {
-                                    ui.label(egui::RichText::new(line).monospace());
-                                    self.links.push(None);
-                                }
-                            }
-                        }
-                        None => {
-                            ui.label(egui::RichText::new(line).monospace());
-                            self.links.push(None);
-                        }
+                        _ => unreachable!()
                     }
                 }
             });

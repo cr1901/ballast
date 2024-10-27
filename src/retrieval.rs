@@ -2,7 +2,7 @@ use async_net::AsyncToSocketAddrs;
 use futures_lite::AsyncWriteExt;
 use log::debug;
 use log::warn;
-use oneshot::{self};
+use oneshot;
 
 use std::error;
 use std::fmt;

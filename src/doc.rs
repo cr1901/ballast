@@ -44,7 +44,7 @@ pub enum AppAction {
 }
 
 pub trait Document {
-    fn render(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction;
+    fn init(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction;
     fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction;
 }
 
@@ -64,12 +64,13 @@ impl Jpeg {
 }
 
 impl Document for Jpeg {
-    fn render(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn init(&mut self, _ui: &mut Ui, ctx: &Context) -> AppAction {
+        // Clear cache of previous image.
         ctx.forget_image("bytes://ballast-image");
         AppAction::None
     }
 
-    fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn present(&mut self, ui: &mut Ui, _ctx: &Context) -> AppAction {
         ui.image(ImageSource::Bytes {
             uri: "bytes://ballast-image".into(),
             bytes: self.raw.clone().into(),
@@ -90,11 +91,11 @@ impl Error {
 }
 
 impl Document for Error {
-    fn render(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn init(&mut self, _ui: &mut Ui, _ctx: &Context) -> AppAction {
         AppAction::None
     }
 
-    fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn present(&mut self, ui: &mut Ui, _ctx: &Context) -> AppAction {
         for line in self.raw.lines() {
             ui.label(egui::RichText::new(line).monospace());
         }
@@ -112,11 +113,11 @@ impl Null {
 }
 
 impl Document for Null {
-    fn render(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn init(&mut self, _ui: &mut Ui, _ctx: &Context) -> AppAction {
         AppAction::None
     }
 
-    fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
+    fn present(&mut self, _ui: &mut Ui, _ctx: &Context) -> AppAction {
         AppAction::None
     }
 }

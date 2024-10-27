@@ -15,7 +15,7 @@ use super::url::NexUrl;
 #[derive(PartialEq)]
 enum ControlFlow {
     Waiting,
-    Rendering,
+    Init,
     Presenting,
 }
 
@@ -153,24 +153,25 @@ impl eframe::App for Ballast {
                     match recv.try_recv() {
                         Ok(r) => {
                             self.doc = Box::from((r, &self.curr_url));
-                            self.state = ControlFlow::Rendering;
+                            self.state = ControlFlow::Init;
                         }
                         _ => {}
                     }
                 }
             }
-            ControlFlow::Rendering => {
+            ControlFlow::Init => {
                 ui_spinner(ui);
-                match self.doc.render(ui, ctx) {
-                    AppAction::StartNewUrl(url) => {
-                        match UrlType::try_from(url.as_str()) {
+                match self.doc.init(ui, ctx) {
+                    AppAction::StartNewUrl(_) => {
+                        unreachable!()
+                        /* match UrlType::try_from(url.as_str()) {
                             Ok(url @ UrlType::Nex(_)) => {
                                 self.url_string = url.to_string();
                                 self.curr_url = Some(url);
                                 self.start_new_url();
                             }
                             Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", url.as_str())
-                        }
+                        } */
                     }
                     AppAction::Toast { kind, text } => { self.toast(text, kind) }
                     AppAction::None => {}
