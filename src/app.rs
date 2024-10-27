@@ -1,16 +1,14 @@
-use std::str::Lines;
-
 use eframe;
-use eframe::egui::load::Bytes;
 use eframe::egui::menu::{self};
-use eframe::egui::{self, Align2, Button, Context, ImageSource, TextEdit, Ui, Widget, WidgetText};
+use eframe::egui::{self, Align2, Button, Context, TextEdit, Ui, Widget, WidgetText};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{debug, warn};
-use url::Url;
 
+use crate::doc::AppAction;
 use crate::retrieval::CancelSend;
 use crate::url::{UrlStack, UrlType};
 
+use super::doc::{self, Document};
 use super::retrieval::{self, CmdSend, RespRecv};
 use super::url::NexUrl;
 
@@ -21,15 +19,6 @@ enum ControlFlow {
     Presenting
 }
 
-/// Return type from BG thread; Null and Error will never be returned from it.
-pub enum Document {
-    /// Replacement for Option::None.
-    Null,
-    Error(String),
-    NexDirectory { raw: String, links: Vec<Option<Url>> },
-    Jpeg { raw: Bytes },
-}
-
 pub struct Ballast {
     state: ControlFlow,
     cmd: CmdSend,
@@ -37,7 +26,7 @@ pub struct Ballast {
     /// Url in the address bar.
     url_string: String,
     /// In-memory repr of a document.
-    doc: Document,
+    doc: Box<dyn Document>,
     /// Current URL.
     curr_url: Option<UrlType>,
     /// History of visited URLs.
@@ -59,7 +48,7 @@ impl Ballast {
             url_string: String::new(),
             curr_url: None,
             url_stack: UrlStack::new(),
-            doc: Document::Null,
+            doc: Box::new(doc::Null::new()),
             resp: None,
             toasts: Toasts::new()
                 .anchor(Align2::RIGHT_BOTTOM, (-10.0, -10.0)) // 10 units from the bottom right corner
@@ -157,26 +146,9 @@ impl eframe::App for Ballast {
                 ui_spinner(ui);
                 if let Some(ref mut recv) = self.resp {
                     match recv.try_recv() {
-                        Ok(Ok(bytes)) => {
-                            self.doc = match &self.curr_url {
-                                Some(UrlType::Nex(url)) => {
-                                    if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
-                                        Document::Jpeg { raw: bytes.into() }
-                                    } else {
-                                        Document::NexDirectory {
-                                            raw: String::from_utf8_lossy(&bytes).into_owned(),
-                                            links: Vec::new()
-                                        }
-                                    }
-                                }
-                                None => unreachable!()
-                            };
+                        Ok(r) => {
+                            self.doc = Box::from((r, &self.curr_url));
                             self.state = ControlFlow::Rendering;
-                        },
-                        Ok(Err(r)) => {
-                            let err_string = format!("Error resolving {}:\n{}", self.curr_url.as_ref().unwrap().to_string(), r.to_string());
-                            self.doc = Document::Error(err_string);
-                            self.state = ControlFlow::Presenting;
                         }
                         _ => {}
                     }
@@ -184,57 +156,44 @@ impl eframe::App for Ballast {
             }
             ControlFlow::Rendering => {
                 ui_spinner(ui);
-                match &self.doc {
-                    Document::NexDirectory { raw, .. } => {
-                        self.state = ControlFlow::Presenting;
-
-                        if raw.contains('\u{fffd}') {
-                            self.toast("UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.", ToastKind::Warning);
+                match self.doc.render(ui, ctx) {
+                    AppAction::StartNewUrl(url) => {
+                        match UrlType::try_from(url.as_str()) {
+                            Ok(url @ UrlType::Nex(_)) => {
+                                self.url_string = url.to_string();
+                                self.curr_url = Some(url);
+                                self.start_new_url();
+                            }
+                            Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", url.as_str())
                         }
-                    },
-                    Document::Jpeg { .. } => {
-                        ctx.forget_image("bytes://ballast-image");
-                        self.state = ControlFlow::Presenting;
                     }
-                    _ => unreachable!()
+                    AppAction::Toast { kind, text } => { self.toast(text, kind) }
+                    AppAction::None => {}
                 }
+
+                self.toasts.show(ctx);
+                self.state = ControlFlow::Presenting;
             },
             ControlFlow::Presenting => {
                 /* let do_find = false; */
-                match &mut self.doc {
-                    Document::NexDirectory { ref mut raw, ref mut links } => {
-                        match ui_nexdir(ui, ctx, raw.lines(), links, &self.url_string, &mut self.toasts) {
-                            Some(TextDocAction::StartNewUrl(url)) => {
-                                match UrlType::try_from(url.as_str()) {
-                                    Ok(url @ UrlType::Nex(_)) => {
-                                        self.url_string = url.to_string();
-                                        self.curr_url = Some(url);
-                                        self.start_new_url();
-                                    }
-                                    Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", url.as_str())
-                                }
-                            },
-                            None => {}
+
+                match self.doc.present(ui, ctx) {
+                    AppAction::StartNewUrl(url) => {
+                        match UrlType::try_from(url.as_str()) {
+                            Ok(url @ UrlType::Nex(_)) => {
+                                self.url_string = url.to_string();
+                                self.curr_url = Some(url);
+                                self.start_new_url();
+                            }
+                            Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", url.as_str())
                         }
-                    },
-                    Document::Jpeg { ref raw} => {
-                        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                            ui.image(ImageSource::Bytes {
-                                uri: "bytes://ballast-image".into(),
-                                bytes: raw.clone()
-                            });
-                        });
-                    },
-                    Document::Error(raw) => {
-                        for line in raw.lines() {
-                            ui.label(egui::RichText::new(line).monospace());
-                        }
-                    },
-                    Document::Null => {},
-                    _ => unimplemented!()
+                    }
+                    AppAction::Toast { kind, text } => { self.toast(text, kind) }
+                    AppAction::None => {}
                 }
 
-                /* TODO: Find logic should go here, and be coupled to TextDoc variant? */
+                self.toasts.show(ctx);
+                /* TODO: Find logic should go here- should be trait method for Document? */
             },
         });
     }
@@ -335,160 +294,4 @@ fn ui_spinner(ui: &mut Ui) {
                 ui.add(egui::widgets::Spinner::new().size(height));
             })
         });
-}
-
-enum TextDocAction {
-    StartNewUrl(String),
-}
-
-fn ui_nexdir(
-    ui: &mut Ui,
-    ctx: &eframe::egui::Context,
-    lines: Lines,
-    links: &mut Vec<Option<Url>>,
-    addr_str: &String,
-    toasts: &mut Toasts,
-) -> Option<TextDocAction> {
-    let mut action = None;
-
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for (i, line) in lines.enumerate() {
-                match links.get(i) {
-                    Some(Some(url)) if line.starts_with("=> ") => {
-                        if let Some(a) = ui_hyperlink(ui, &line, &url) {
-                            action = Some(a);
-                            return;
-                        }
-                    }
-                    Some(Some(_)) => {
-                        unreachable!(
-                            "links vector should have an entry for line {}, but doesn't",
-                            i
-                        );
-                    }
-                    Some(None) => {
-                        ui.label(egui::RichText::new(line).monospace());
-                    }
-                    None if line.starts_with("=> ") => {
-                        assert!(links.len() == i);
-
-                        // let (url_port, _) = split_directory(line);
-                        match resolve_line(&line, &addr_str) {
-                            Some(url) => {
-                                if let Some(a) = ui_hyperlink(ui, &line, &url) {
-                                    action = Some(a);
-                                    return;
-                                }
-
-                                links.push(Some(url.clone()));
-                            }
-                            None => {
-                                ui.label(egui::RichText::new(line).monospace());
-                                links.push(None);
-                            }
-                        }
-                    }
-                    None => {
-                        ui.label(egui::RichText::new(line).monospace());
-                        links.push(None);
-                    }
-                }
-            }
-
-            toasts.show(ctx);
-        });
-
-    action
-}
-
-fn ui_hyperlink(ui: &mut Ui, line: &str, url: &Url) -> Option<TextDocAction> {
-    match url.scheme() {
-        "http" | "https" => ui_http(ui, &line),
-        "nex" => {
-            if ui_nex(ui, &line) {
-                return Some(TextDocAction::StartNewUrl(url.to_string()));
-            }
-        }
-        _ => {
-            if ui_generic_link(ui, &line) {
-                return Some(TextDocAction::StartNewUrl(url.to_string()));
-            }
-        }
-    }
-
-    None
-}
-
-fn ui_http(ui: &mut Ui, line: &str) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let (_, url_port, rest) = split_directory(line);
-
-        ui.label(egui::RichText::new("=> ").monospace());
-        ui.hyperlink(url_port);
-
-        ui.label(egui::RichText::new(rest).monospace());
-    });
-}
-
-fn ui_nex(ui: &mut Ui, line: &str) -> bool {
-    ui_generic_link(ui, line)
-}
-
-fn ui_generic_link(ui: &mut Ui, line: &str) -> bool {
-    let mut start_new = false;
-
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let (_, url_port, rest) = split_directory(line);
-
-        ui.label(egui::RichText::new("=> ").monospace());
-        if ui.link(url_port).clicked() {
-            start_new = true;
-        }
-
-        ui.label(egui::RichText::new(rest).monospace());
-    });
-
-    start_new
-}
-
-fn split_directory(line: &str) -> (&str, &str, &str) {
-    let url_end = line[3..].find(' ').unwrap_or(line.len() - 3) + 3;
-    (&line[..3], &line[3..url_end], &line[url_end..])
-}
-
-// FIXME: nex-specific right now... needs refactor.
-fn resolve_line(line: &str, addr_str: &str) -> Option<Url> {
-    let (_, url_port, _) = split_directory(line);
-
-    match Url::parse(url_port) {
-        Ok(url) => Some(url),
-        Err(_) => resolve_relative(addr_str, url_port),
-    }
-}
-
-// FIXME: nex-specific right now... needs refactor.
-fn resolve_relative(addr_str: &str, path: &str) -> Option<Url> {
-    let abs_url = match Url::parse(addr_str) {
-        Ok(url) => {
-            if !url.path().ends_with('/') && !url.path().contains('.') {
-                let new_url = url.join(&format!("{}/{}", url.path(), path));
-                debug!(target: "nex-ballast-fg", "fixing up nex directory without trailing slash {:?} => {:?}", url, new_url);
-                new_url
-            } else {
-                url.join(path)
-            }
-        }
-        Err(_) => {
-            return None;
-        }
-    };
-    debug!(target: "nex-ballast-fg", "url didn't parse... treating as relative {:?}", &abs_url);
-    match abs_url {
-        Ok(url) => Some(url),
-        Err(_) => None,
-    }
 }
