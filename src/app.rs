@@ -16,7 +16,7 @@ use super::url::NexUrl;
 enum ControlFlow {
     Waiting,
     Rendering,
-    Presenting
+    Presenting,
 }
 
 pub struct Ballast {
@@ -58,10 +58,10 @@ impl Ballast {
 
     pub fn do_home_page(&mut self) {
         self.url_string = String::from("nex://nex.nightfall.city/");
-        self.curr_url = Some(
-            UrlType::Nex(NexUrl::try_from("nex://nex.nightfall.city/")
-                .expect("home page should be a valid NEX URL")),
-        );
+        self.curr_url = Some(UrlType::Nex(
+            NexUrl::try_from("nex://nex.nightfall.city/")
+                .expect("home page should be a valid NEX URL"),
+        ));
         self.start_new_url();
     }
 
@@ -96,7 +96,10 @@ impl Ballast {
         }
     }
 
-    fn toast<T>(&mut self, text: T, kind: ToastKind) where T: Into<WidgetText> {
+    fn toast<T>(&mut self, text: T, kind: ToastKind)
+    where
+        T: Into<WidgetText>,
+    {
         self.toasts.add(Toast {
             text: text.into(),
             kind,
@@ -118,7 +121,9 @@ impl eframe::App for Ballast {
                         self.curr_url = Some(url);
                         self.start_new_url();
                     }
-                    Err(_) => debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", self.url_string)
+                    Err(_) => {
+                        debug!(target: "nex-ballast-fg", "url didn't parse as supported... {:?}", self.url_string)
+                    }
                 }
             }
             Some(AddressBarAction::Unsupported(msg)) => {

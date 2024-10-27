@@ -16,7 +16,7 @@ use async_net::TcpStream;
 use eyre::Result;
 use futures_lite::{future::block_on, AsyncReadExt, FutureExt};
 
-use super::url::{UrlType, NexUrl};
+use super::url::{NexUrl, UrlType};
 
 type Raw = Vec<u8>;
 

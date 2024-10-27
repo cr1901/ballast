@@ -13,11 +13,15 @@ pub(super) struct Directory {
 }
 
 impl Directory {
-    pub fn new<B, U>(bytes: B, url: &U) -> Self where B: AsRef<[u8]>, U: ToString {
+    pub fn new<B, U>(bytes: B, url: &U) -> Self
+    where
+        B: AsRef<[u8]>,
+        U: ToString,
+    {
         Self {
             raw: String::from_utf8_lossy(bytes.as_ref()).into_owned(),
             addr: url.to_string(),
-            links: Vec::new()
+            links: Vec::new(),
         }
     }
 }
@@ -28,7 +32,7 @@ impl Document for Directory {
             return AppAction::Toast {
                 text: "UTF-8, replacement character detected.\nThis is probably a (unsupported) binary file.".into(),
                 kind: ToastKind::Warning
-            }
+            };
         }
 
         AppAction::None
@@ -38,51 +42,51 @@ impl Document for Directory {
         let mut action = AppAction::None;
 
         egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for (i, line) in self.raw.lines().enumerate() {
-                match self.links.get(i) {
-                    Some(Some(url)) if line.starts_with("=> ") => {
-                        if let Some(u) = ui_hyperlink(ui, &line, &url) {
-                            action = AppAction::StartNewUrl(u);
-                            return;
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (i, line) in self.raw.lines().enumerate() {
+                    match self.links.get(i) {
+                        Some(Some(url)) if line.starts_with("=> ") => {
+                            if let Some(u) = ui_hyperlink(ui, &line, &url) {
+                                action = AppAction::StartNewUrl(u);
+                                return;
+                            }
                         }
-                    }
-                    Some(Some(_)) => {
-                        unreachable!(
-                            "links vector should have an entry for line {}, but doesn't",
-                            i
-                        );
-                    }
-                    Some(None) => {
-                        ui.label(egui::RichText::new(line).monospace());
-                    }
-                    None if line.starts_with("=> ") => {
-                        assert!(self.links.len() == i);
+                        Some(Some(_)) => {
+                            unreachable!(
+                                "links vector should have an entry for line {}, but doesn't",
+                                i
+                            );
+                        }
+                        Some(None) => {
+                            ui.label(egui::RichText::new(line).monospace());
+                        }
+                        None if line.starts_with("=> ") => {
+                            assert!(self.links.len() == i);
 
-                        // let (url_port, _) = split_directory(line);
-                        match resolve_line(&line, &self.addr) {
-                            Some(url) => {
-                                if let Some(u) = ui_hyperlink(ui, &line, &url) {
-                                    action = AppAction::StartNewUrl(u);
-                                    return;
+                            // let (url_port, _) = split_directory(line);
+                            match resolve_line(&line, &self.addr) {
+                                Some(url) => {
+                                    if let Some(u) = ui_hyperlink(ui, &line, &url) {
+                                        action = AppAction::StartNewUrl(u);
+                                        return;
+                                    }
+
+                                    self.links.push(Some(url.clone()));
                                 }
-
-                                self.links.push(Some(url.clone()));
-                            }
-                            None => {
-                                ui.label(egui::RichText::new(line).monospace());
-                                self.links.push(None);
+                                None => {
+                                    ui.label(egui::RichText::new(line).monospace());
+                                    self.links.push(None);
+                                }
                             }
                         }
-                    }
-                    None => {
-                        ui.label(egui::RichText::new(line).monospace());
-                        self.links.push(None);
+                        None => {
+                            ui.label(egui::RichText::new(line).monospace());
+                            self.links.push(None);
+                        }
                     }
                 }
-            }
-        });
+            });
 
         action
     }

@@ -1,5 +1,5 @@
-use eframe::{self, egui};
 use eframe::egui::{Context, ImageSource, Ui, WidgetText};
+use eframe::{self, egui};
 use egui_toast::ToastKind;
 use eyre::Report;
 
@@ -18,17 +18,15 @@ mod nex;
 impl From<(Result<Vec<u8>, Report>, &Option<OurUrl>)> for Box<dyn Document> {
     fn from((recv, url): (Result<Vec<u8>, Report>, &Option<OurUrl>)) -> Self {
         match (recv, url) {
-            (Ok(bytes), Some(url)) => {
-                match url {
-                    OurUrl::Nex(url) => {
-                        if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
-                            Box::new(Jpeg::new(bytes))
-                        } else {
-                            Box::new(nex::Directory::new(bytes, url))
-                        }
+            (Ok(bytes), Some(url)) => match url {
+                OurUrl::Nex(url) => {
+                    if url.selector().ends_with(".jpg") || url.selector().ends_with(".jpeg") {
+                        Box::new(Jpeg::new(bytes))
+                    } else {
+                        Box::new(nex::Directory::new(bytes, url))
                     }
-                    _ => unreachable!()
                 }
+                _ => unreachable!(),
             },
             (Err(r), Some(url)) => {
                 let err_string = format!("Error resolving {}:\n{}", url.to_string(), r.to_string());
@@ -41,11 +39,8 @@ impl From<(Result<Vec<u8>, Report>, &Option<OurUrl>)> for Box<dyn Document> {
 
 pub enum AppAction {
     None,
-    Toast {
-        kind: ToastKind,
-        text: WidgetText
-    },
-    StartNewUrl(String)
+    Toast { kind: ToastKind, text: WidgetText },
+    StartNewUrl(String),
 }
 
 pub trait Document {
@@ -54,13 +49,16 @@ pub trait Document {
 }
 
 pub struct Jpeg {
-    raw: Vec<u8>
+    raw: Vec<u8>,
 }
 
 impl Jpeg {
-    pub fn new<B>(bytes: B) -> Self where B: ToOwned<Owned = Vec<u8>> {
+    pub fn new<B>(bytes: B) -> Self
+    where
+        B: ToOwned<Owned = Vec<u8>>,
+    {
         Self {
-            raw: bytes.to_owned()
+            raw: bytes.to_owned(),
         }
     }
 }
@@ -74,23 +72,20 @@ impl Document for Jpeg {
     fn present(&mut self, ui: &mut Ui, ctx: &Context) -> AppAction {
         ui.image(ImageSource::Bytes {
             uri: "bytes://ballast-image".into(),
-            bytes: self.raw.clone().into()
+            bytes: self.raw.clone().into(),
         });
 
         AppAction::None
     }
 }
 
-
 pub struct Error {
-    raw: String
+    raw: String,
 }
 
 impl Error {
     pub fn new(msg: String) -> Self {
-        Self {
-            raw: msg
-        }
+        Self { raw: msg }
     }
 }
 

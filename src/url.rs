@@ -9,7 +9,7 @@ pub struct TryFromStringError;
 
 #[derive(Clone, Debug)]
 pub enum UrlType {
-    Nex(NexUrl)
+    Nex(NexUrl),
 }
 
 impl TryFrom<&str> for UrlType {
@@ -18,7 +18,7 @@ impl TryFrom<&str> for UrlType {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match Url::parse(&value).map_err(|_| TryFromStringError)?.scheme() {
             "nex" => Ok(UrlType::Nex(NexUrl::try_from(value)?)),
-            _ => Err(TryFromStringError)
+            _ => Err(TryFromStringError),
         }
     }
 }
@@ -26,7 +26,7 @@ impl TryFrom<&str> for UrlType {
 impl ToString for UrlType {
     fn to_string(&self) -> String {
         match self {
-            Self::Nex(u) => u.to_string()
+            Self::Nex(u) => u.to_string(),
         }
     }
 }
